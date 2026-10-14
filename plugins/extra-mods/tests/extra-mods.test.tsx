@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'claude-code/testing'
+import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 import type { On, PaneOpenArgs } from 'claude-code'
 
 import {
@@ -256,7 +256,7 @@ const LEARN_TOOL = 'mcp__extra-mods__explain'
 
 // The menu's pane drawn on the terminal and on the desktop at once, over the
 // same state: the test acts on the first and reads both. `bodyRows` tall.
-const mountMenus = async ($: Parameters<Parameters<typeof test>[1]>[0], bodyRows = 26) => {
+const mountMenus = async ($: Engine, bodyRows = 26) => {
   const props = { ...pane.props, scroll: { offset: 0, bodyRows } }
   const [terminal, desktop] = await Promise.all(SURFACES.map(surface => $.ui.mount({ plugin: PLUGIN, surface, ...pane, props })))
   return [terminal!, desktop!] as const
