@@ -55,6 +55,7 @@ import {
   LEARN_TOOL_DESCRIPTION,
   LEARN_TOOL_NAME,
   LEARN_TOOL_SCHEMA,
+  scrollNotes,
   toNote,
   visibleNotes,
 } from './lib/learn'
@@ -1416,6 +1417,10 @@ export const register: Register = on => {
       // The menu's pane outlives the session it was opened in: close it.
       await $.ui.close({ id: PANE }).catch(() => {})
       await update($, menu, () => null)
+      // A new conversation starts with no explanations; learn mode itself is kept.
+      await update($, notes, () => [])
+      await update($, notesScroll, () => 0)
+      learnToastShown = false
       await restore($)
     }
     return ran
@@ -1477,10 +1482,16 @@ export const register: Register = on => {
     return closed
   }).catch(($, e, next) => next(e))
 
-  // Themes: the wheel and the scroll keys move the theme list's own window,
+  // Themes and Learn: the wheel and the scroll keys move the page's own list,
   // never the pane, so the tabs and the language row stay put.
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
-    if ((await read($, menu)) !== 'themes' || e.by === 0) return next(e)
+    const panel = await read($, menu)
+    if (panel === 'learn' && e.by !== 0) {
+      const count = (await read($, notes)).length
+      await update($, notesScroll, s => scrollNotes(s, e.by, count))
+      return {}
+    }
+    if (panel !== 'themes' || e.by === 0) return next(e)
     await scrollThemes($, (await read($, themeScroll)) + e.by, e.bodyRows)
     return {}
   }).catch(($, e, next) => next(e))
