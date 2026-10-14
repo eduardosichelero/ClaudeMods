@@ -38,7 +38,7 @@ Mostra modelo, pasta, branch, contexto, limites de 5h/7d e estado do cache numa 
 
 ### Aprender
 
-O Claude explica, enquanto trabalha, as tecnologias e os passos que escolhe: o que cada um é, para que serve ali e por que foi escolhido. Ligue na aba Aprender; o painel passa a abrir ao lado do trabalho com 40% do terminal, e o Esc devolve o teclado sem fechá-lo. `/tools learn` abre direto nela.
+O Claude explica, enquanto trabalha, as tecnologias e os passos que escolhe: o que cada um é, para que serve ali e por que foi escolhido. Cada explicação é um cartão na cor do seu tipo, com o porquê numa linha própria. Ligue na aba Aprender; o painel passa a abrir ao lado do trabalho com 40% do terminal, e o Esc devolve o teclado sem fechá-lo. `/tools learn` abre direto nela.
 
 A barra lateral fala English e Português. Teclas: **Tab** move, **Enter** escolhe, **Esc** fecha.
 
@@ -64,7 +64,7 @@ Para atualizar: `claude plugin marketplace update jdsjh-mods && claude plugin up
 - **Tema:** os temas são baixados uma vez para `~/.claude/extra-mods/themes/`. O escolhido vira `~/.claude/themes/extra-mods.json` e fica salvo no `~/.claude/settings.json`. Reinicie o Claude Code uma vez na primeira vez; depois disso os temas trocam ao vivo. O fundo do terminal acompanha, no Windows Terminal (durante a sessão, depois volta ao normal) e nos terminais que aceitam cores OSC (Ghostty, iTerm2, kitty, WezTerm, Terminal.app).
 - **Modo:** a troca de modelo usa o `/model` do próprio Claude Code. O esforço vale para todas as requisições e fica salvo. O modo de permissão da sessão atual muda com **shift+tab**; a escolha aqui é salva como `permissions.defaultMode`.
 - **Status:** vem ligado. Tira o seu `statusLine` do `settings.json` e coloca de volta quando você desliga. Shells e monitores em segundo plano aparecem numa segunda linha; clique para abrir `/tasks`.
-- **Aprender:** ligado, uma seção curta entra no prompt de sistema do Claude e a ferramenta `explain` entra na lista de ferramentas; desligado, as duas saem. As explicações valem para a sessão (um `/clear` recomeça a lista), até 100. Elas vêm no idioma do painel.
+- **Aprender:** ligado, uma seção curta entra no prompt de sistema do Claude e a ferramenta `explain` entra na lista de ferramentas; desligado, as duas saem. Para gastar pouco, o Claude manda as explicações de um passo numa chamada só, junto do trabalho que explicam, com uma ou duas frases cada, e só na primeira vez que algo aparece. As explicações valem para a sessão (um `/clear` recomeça a lista), até 100. Elas vêm no idioma do painel.
 - Todo arquivo de configuração ganha um backup antes, como `*.extra-mods.bak`.
 
 </details>

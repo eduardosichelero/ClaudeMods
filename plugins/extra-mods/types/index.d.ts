@@ -19,8 +19,9 @@ export type ZenTask = {
 // idea or pattern, or the step being done.
 export type LearnKind = 'tech' | 'concept' | 'step'
 
-// One explanation Claude posted with the explain tool.
-export type LearnNote = { id: string; title: string; text: string; kind: LearnKind; at: number }
+// One explanation Claude posted with the explain tool; `why`, when given, says
+// why it was picked.
+export type LearnNote = { id: string; title: string; text: string; why?: string; kind: LearnKind; at: number }
 
 // colors: the theme's eight normal ANSI colors, drawn as its swatch.
 export type ThemeEntry = { slug: string; name: string; colors: string[] }

@@ -58,7 +58,7 @@ import {
   LEARN_TOOL_NAME,
   LEARN_TOOL_SCHEMA,
   scrollNotes,
-  toNote,
+  toNotes,
 } from './lib/learn'
 
 // Every value the drawings read. Settings worth keeping across sessions are
@@ -1146,11 +1146,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
           </Text>
         ) : (
           shown.map(note => (
-            <Box key={`note-${note.id}`} flexDirection="column" marginTop={1} flexShrink={0}>
+            <Box
+              key={`note-${note.id}`}
+              flexDirection="column"
+              flexShrink={0}
+              borderStyle="round"
+              borderColor={KIND_COLORS[note.kind]}
+              paddingX={1}
+            >
               <Text>
-                <Text color={KIND_COLORS[note.kind]}>[{t(`k_${note.kind}`)}]</Text> <Text bold>{note.title}</Text>
+                <Text color={KIND_COLORS[note.kind]}>● {t(`k_${note.kind}`)}</Text> <Text bold>{note.title}</Text>
               </Text>
               <Markdown text={note.text} />
+              {note.why !== undefined && (
+                <Text>
+                  <Text color={KIND_COLORS[note.kind]}>→ {t('learnWhy')}: </Text>
+                  <Text dimColor>{note.why}</Text>
+                </Text>
+              )}
             </Box>
           ))
         )}
@@ -1682,15 +1695,16 @@ export const register: Register = on => {
     isDeferred: !(await read($, learnOn)),
   })).catch(($, e, next) => next(e))
 
-  // Learn: Claude's explanations, kept as the tab's notes. One missing its
-  // title or text is refused, so Claude sends it again whole.
+  // Learn: Claude's explanations, kept as the tab's notes. A call with no
+  // whole note is refused; one with some kept says only what it skipped, so
+  // the answer costs Claude next to nothing to read.
   on('tool.call', { tool: LEARN_TOOL }, async ($, e) => {
-    const made = toNote(e, e.tool_use_id, Date.now())
-    if ('error' in made) return { deny: made.error }
-    const list = await update($, notes, l => addNote(l, made.note))
+    const made = toNotes(e, e.tool_use_id, Date.now())
+    if (made.notes.length === 0) return { deny: made.errors.join(' ') }
+    await update($, notes, l => made.notes.reduce(addNote, l))
     await update($, notesScroll, () => 0)
     if (await read($, learnOn)) await showLearn($)
-    return { result: `Explicação mostrada no painel (${list.length} nesta sessão).` }
+    return { result: made.errors.length === 0 ? 'ok' : `ok; skipped ${made.errors.join(' ')}` }
   })
 
   // Mode: the chosen effort rides on every model request of the session; the

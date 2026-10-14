@@ -6,48 +6,51 @@ export const LEARN_TOOL_NAME = 'explain'
 
 export const LEARN_KINDS: readonly LearnKind[] = ['tech', 'concept', 'step']
 
-// The most notes a session keeps, and the longest title and text a note holds.
+// The most notes a session keeps, the most one call adds, and the longest
+// title, text and why a note holds: short, so they cost little to write and to
+// keep in the context.
 export const MAX_NOTES = 100
-export const MAX_TITLE = 80
-export const MAX_TEXT = 600
+export const MAX_PER_CALL = 5
+export const MAX_TITLE = 40
+export const MAX_TEXT = 300
+export const MAX_WHY = 200
 
 // Each kind's label color in the tab: cyan, magenta, green.
 export const KIND_COLORS: Record<LearnKind, string> = { tech: '#06b6d4', concept: '#d946ef', step: '#22c55e' }
 
+// The rules live here alone, read only while learn mode is on; the prompt
+// section just says so and in which language.
 export const LEARN_TOOL_DESCRIPTION =
-  'Posts a short explanation to the Learn tab the user reads while you work. Call it when you choose a ' +
-  'technology, library, tool, pattern or notable command, or start an important step: a short title and ' +
-  '2 to 4 plain sentences on what it is, what it does here and why it was chosen over the alternatives.'
+  'Shows short notes in the Learn panel the user reads while you work. Send it in the same response as the ' +
+  'tool call it explains, never on its own, with every note for that step in one call. Only for a technology, ' +
+  'library, pattern or notable command the first time it comes up, or the start of a big step; at most 3 notes ' +
+  'per request; never for trivial actions like reading files. Each note: a title, one sentence on what it is and ' +
+  'does here and, when it helps, one on why it was picked.'
 
 export const LEARN_TOOL_SCHEMA = {
   type: 'object',
   properties: {
-    title: { type: 'string', description: 'A short name for what is explained, like "Vite" or "Why SQLite".' },
-    text: { type: 'string', description: '2 to 4 plain sentences: what it is, what it does here, why it was chosen.' },
-    kind: {
-      type: 'string',
-      enum: ['tech', 'concept', 'step'],
-      description: 'tech: a technology or library; concept: an idea or pattern; step: what is being done now.',
+    notes: {
+      type: 'array',
+      maxItems: MAX_PER_CALL,
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'A short name, like "Vite".' },
+          text: { type: 'string', description: 'One sentence: what it is and does here.' },
+          why: { type: 'string', description: 'Optional, one sentence: why it was picked.' },
+          kind: { type: 'string', enum: ['tech', 'concept', 'step'] },
+        },
+        required: ['title', 'text'],
+      },
     },
   },
-  required: ['title', 'text'],
+  required: ['notes'],
 }
 
 const PROMPTS: Record<Lang, string> = {
-  pt: [
-    'Modo Aprender ligado: o usuário está aprendendo e acompanha um painel lateral com as suas explicações.',
-    'Sempre que escolher uma tecnologia, biblioteca, ferramenta, padrão ou comando relevante, ou começar um passo importante,',
-    'chame a ferramenta explain (mcp__extra-mods__explain) antes ou logo ao fazê-lo, com um título curto e de 2 a 4 frases simples em português:',
-    'o que é, para que serve aqui e por que foi escolhido em vez das alternativas.',
-    'Não repita o que já explicou nesta sessão e não explique ações triviais, como ler arquivos ou listar pastas.',
-  ].join(' '),
-  en: [
-    'Learn mode is on: the user is learning and follows a side panel with your explanations.',
-    'Whenever you choose a technology, library, tool, pattern or notable command, or start an important step,',
-    'call the explain tool (mcp__extra-mods__explain) before or as you do it, with a short title and 2 to 4 plain sentences in English:',
-    'what it is, what it does here and why it was chosen over the alternatives.',
-    'Do not repeat what you already explained this session, and do not explain trivial actions such as reading files or listing folders.',
-  ].join(' '),
+  pt: 'Modo Aprender ligado: o usuário acompanha suas explicações num painel. Use a ferramenta explain (mcp__extra-mods__explain) como a descrição dela pede, escrevendo em português.',
+  en: 'Learn mode is on: the user follows your explanations in a panel. Use the explain tool (mcp__extra-mods__explain) as its description says, writing in English.',
 }
 
 // The system prompt section that asks Claude for explanations, in the panel's language.
@@ -58,15 +61,48 @@ const cut = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)
 
 export type NoteResult = { note: LearnNote } | { error: string }
 
-// Reads the explain tool's input into a note, or says what is missing.
+// Reads one note of the explain tool's input, or says what is missing.
 export function toNote(input: unknown, id: string, at: number): NoteResult {
-  const raw = (input ?? {}) as { title?: unknown; text?: unknown; kind?: unknown }
+  const raw = (input ?? {}) as { title?: unknown; text?: unknown; why?: unknown; kind?: unknown }
   const title = typeof raw.title === 'string' ? raw.title.trim() : ''
   const text = typeof raw.text === 'string' ? raw.text.trim() : ''
   const missing = [title === '' ? 'title' : '', text === '' ? 'text' : ''].filter(m => m !== '')
   if (missing.length > 0) return { error: `explain needs a non-empty ${missing.join(' and ')}.` }
   const kind = LEARN_KINDS.includes(raw.kind as LearnKind) ? (raw.kind as LearnKind) : 'concept'
-  return { note: { id, title: cut(title, MAX_TITLE), text: cut(text, MAX_TEXT), kind, at } }
+  const why = typeof raw.why === 'string' ? raw.why.trim() : ''
+  const note: LearnNote = { id, title: cut(title, MAX_TITLE), text: cut(text, MAX_TEXT), kind, at }
+  return { note: why === '' ? note : { ...note, why: cut(why, MAX_WHY) } }
+}
+
+export type NotesResult = { notes: LearnNote[]; errors: string[] }
+
+// A `notes` list sent as JSON text, as models now and then send an array.
+const parsed = (notes: unknown): unknown => {
+  if (typeof notes !== 'string') return notes
+  try {
+    return JSON.parse(notes)
+  } catch {
+    return notes
+  }
+}
+
+// Reads the explain tool's input into its notes: a `notes` list, or one note
+// given at the top level as before. A note missing its title or text is
+// skipped and said, the rest kept; past MAX_PER_CALL the rest are dropped.
+export function toNotes(input: unknown, id: string, at: number): NotesResult {
+  const notes = parsed(((input ?? {}) as { notes?: unknown }).notes)
+  const items = Array.isArray(notes) ? notes.slice(0, MAX_PER_CALL) : [input]
+  if (items.length === 0) return { notes: [], errors: ['explain needs at least one note.'] }
+  const one = items.length === 1
+  return items.reduce<NotesResult>(
+    (acc, item, i) => {
+      const made = toNote(item, one ? id : `${id}:${i}`, at)
+      if ('note' in made) acc.notes.push(made.note)
+      else acc.errors.push(one ? made.error : `note ${i + 1}: ${made.error}`)
+      return acc
+    },
+    { notes: [], errors: [] },
+  )
 }
 
 // The list with `note` added last, keeping the newest MAX_NOTES.
@@ -76,16 +112,20 @@ export const addNote = (list: readonly LearnNote[], note: LearnNote): LearnNote[
 // under the menu's own width.
 export const learnColumns = (terminalColumns: number, floor = 56) => Math.max(floor, Math.round(terminalColumns * 0.4))
 
-// Cells a note's label and the space after it take: the widest, "[tecnologia] ".
+// Cells a note's label and the space after it take: the widest, "● tecnologia ".
 const LABEL_CELLS = 13
+// Cells the why line's lead takes: the widest, "→ por quê: ".
+const WHY_CELLS = 11
 
-// Rows a note takes in a list `width` cells wide: the gap above it, its label
-// and title, and its text as wrapped.
+// Rows a note's card takes in a list `width` cells wide: its border above and
+// below, its label and title, its text as wrapped and its why line. Inside, the
+// border and padding leave it `width - 4` cells.
 export const noteRows = (note: LearnNote, width: number) => {
-  const w = Math.max(1, width)
+  const w = Math.max(1, width - 4)
   const head = Math.max(1, Math.ceil((LABEL_CELLS + note.title.length) / w))
   const body = note.text.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / w)), 0)
-  return 1 + head + body
+  const why = note.why === undefined ? 0 : Math.ceil((WHY_CELLS + note.why.length) / w)
+  return 2 + head + body + why
 }
 
 // The rows the Learn page leaves its list: the body less the tab strip (3),

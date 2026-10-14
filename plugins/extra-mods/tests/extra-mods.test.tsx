@@ -15,7 +15,20 @@ import {
 } from '../hooks/lib/palette'
 import { barCells, percentOf, stepLabel, visibleSteps } from '../hooks/lib/zen'
 import { backgroundPill, barFill, cacheState, CACHE_TTL_MS, colorFor, fmtDuration, fmtTokens } from '../hooks/lib/status'
-import { addNote, fitNotes, learnColumns, learnPrompt, learnRows, MAX_NOTES, noteRows, scrollNotes, toNote } from '../hooks/lib/learn'
+import {
+  addNote,
+  fitNotes,
+  learnColumns,
+  learnPrompt,
+  learnRows,
+  LEARN_TOOL_DESCRIPTION,
+  MAX_NOTES,
+  MAX_PER_CALL,
+  noteRows,
+  scrollNotes,
+  toNote,
+  toNotes,
+} from '../hooks/lib/learn'
 
 const PLUGIN = 'extra-mods'
 const SURFACES = ['terminal', 'desktop'] as const
@@ -501,14 +514,41 @@ describe('learn notes', () => {
     })
     expect(toNote({ title: 'MVC', text: 'Splits the app.' }, 'n2', 0)).toMatchObject({ note: { kind: 'concept' } })
     expect(toNote({ title: 'MVC', text: 'x', kind: 'weird' }, 'n3', 0)).toMatchObject({ note: { kind: 'concept' } })
+    expect(toNote({ title: 'Vite', text: 'A dev server.', why: ' Fast reloads. ' }, 'n4', 0)).toMatchObject({ note: { why: 'Fast reloads.' } })
+    const made = toNote({ title: 'Vite', text: 'A dev server.', why: '  ' }, 'n5', 0)
+    expect('note' in made && 'why' in made.note).toBe(false)
+  })
+
+  test('reads a list of notes in one call, and one note given alone', async () => {
+    expect(toNotes({ notes: [{ title: 'Vite', text: 'A dev server.' }, { title: 'React', text: 'A UI library.' }] }, 'c', 1)).toEqual({
+      notes: [
+        { id: 'c:0', title: 'Vite', text: 'A dev server.', kind: 'concept', at: 1 },
+        { id: 'c:1', title: 'React', text: 'A UI library.', kind: 'concept', at: 1 },
+      ],
+      errors: [],
+    })
+    expect(toNotes({ notes: [{ title: 'Vite', text: 'A dev server.' }] }, 'c', 1).notes[0]?.id).toBe('c')
+    expect(toNotes({ title: 'Vite', text: 'A dev server.' }, 'c', 1).notes[0]?.id).toBe('c')
+    // A list sent as JSON text reads the same.
+    expect(toNotes({ notes: JSON.stringify([{ title: 'Vite', text: 'x' }, { title: 'Bun', text: 'y' }]) }, 'c', 1).notes).toHaveLength(2)
+  })
+
+  test('keeps the whole notes of a call and says which it skipped', async () => {
+    expect(toNotes({ notes: [{ title: 'Vite', text: 'ok' }, { text: 'no title' }] }, 'c', 0)).toMatchObject({
+      notes: [{ title: 'Vite' }],
+      errors: ['note 2: explain needs a non-empty title.'],
+    })
+    expect(toNotes({ notes: [] }, 'c', 0)).toEqual({ notes: [], errors: ['explain needs at least one note.'] })
+    const many = Array.from({ length: MAX_PER_CALL + 3 }, (_, i) => ({ title: `t${i}`, text: 'x' }))
+    expect(toNotes({ notes: many }, 'c', 0).notes).toHaveLength(MAX_PER_CALL)
   })
 
   test('cuts long titles and texts with an ellipsis', async () => {
     const made = toNote({ title: 'T'.repeat(200), text: 'x'.repeat(1000) }, 'n', 0)
     if (!('note' in made)) throw new Error('expected a note')
-    expect(made.note.title).toHaveLength(80)
+    expect(made.note.title).toHaveLength(40)
     expect(made.note.title.endsWith('…')).toBe(true)
-    expect(made.note.text).toHaveLength(600)
+    expect(made.note.text).toHaveLength(300)
     expect(made.note.text.endsWith('…')).toBe(true)
   })
 
@@ -544,20 +584,23 @@ describe('learn notes', () => {
     expect(scrollNotes(1, 0, 3)).toBe(1)
   })
 
-  test('a note takes its gap, its title and its wrapped text in rows', async () => {
-    const note = (title: string, text: string) => ({ id: 'n', title, text, kind: 'tech' as const, at: 0 })
-    expect(noteRows(note('Vite', 'A dev server.'), 54)).toBe(3)
-    expect(noteRows(note('Vite', 'x'.repeat(600)), 54)).toBe(1 + 1 + 12)
-    expect(noteRows(note('Vite', 'one\n\ntwo'), 54)).toBe(1 + 1 + 3)
+  test("a note's card takes its border, its title, its wrapped text and its why in rows", async () => {
+    const note = (title: string, text: string, why?: string) => ({ id: 'n', title, text, kind: 'tech' as const, at: 0, ...(why === undefined ? {} : { why }) })
+    // 54 cells less the card's border and padding leave 50.
+    expect(noteRows(note('Vite', 'A dev server.'), 54)).toBe(2 + 1 + 1)
+    expect(noteRows(note('Vite', 'x'.repeat(300)), 54)).toBe(2 + 1 + 6)
+    expect(noteRows(note('Vite', 'one\n\ntwo'), 54)).toBe(2 + 1 + 3)
+    expect(noteRows(note('Vite', 'A dev server.', 'Fast.'), 54)).toBe(2 + 1 + 1 + 1)
+    expect(noteRows(note('Vite', 'A dev server.', 'x'.repeat(40)), 54)).toBe(2 + 1 + 1 + 2)
   })
 
   test('the list draws the newest notes that fit, and shows the top of one too tall', async () => {
     const notes = Array.from({ length: 30 }, (_, i) => ({ id: `n${i}`, title: 't', text: 'short', kind: 'step' as const, at: i }))
     const fit = fitNotes(notes, 0, 10, 54)
-    expect(fit.shown.map(n => n.id)).toEqual(['n27', 'n28', 'n29'])
+    expect(fit.shown.map(n => n.id)).toEqual(['n28', 'n29'])
     expect(fit.isTall).toBe(false)
-    expect(fitNotes(notes, 2, 10, 54).shown.map(n => n.id)).toEqual(['n25', 'n26', 'n27'])
-    const big = { id: 'big', title: 'Big', text: 'x'.repeat(600), kind: 'tech' as const, at: 99 }
+    expect(fitNotes(notes, 2, 10, 54).shown.map(n => n.id)).toEqual(['n26', 'n27'])
+    const big = { id: 'big', title: 'Big', text: 'line\n'.repeat(10), kind: 'tech' as const, at: 99 }
     expect(fitNotes([...notes, big], 0, 10, 54)).toEqual({ shown: [big], isTall: true })
     expect(fitNotes([], 0, 10, 54)).toEqual({ shown: [], isTall: false })
   })
@@ -573,6 +616,12 @@ describe('learn notes', () => {
     expect(learnPrompt('pt')).toMatch(/em português/)
     expect(learnPrompt('en')).toMatch(/mcp__extra-mods__explain/)
     expect(learnPrompt('en')).toMatch(/in English/)
+  })
+
+  test('the rules are said once, in the tool, and the prompt section stays one line', async () => {
+    expect(LEARN_TOOL_DESCRIPTION).toMatch(/same response/)
+    expect(LEARN_TOOL_DESCRIPTION).toMatch(/one call/)
+    for (const lang of ['en', 'pt'] as const) expect(learnPrompt(lang).length).toBeLessThan(200)
   })
 })
 
@@ -673,10 +722,14 @@ describe('learn tab', () => {
     await corner.press({ key: 'tools-toggle' })
 
     const answered = await $.tool.call({ tool: LEARN_TOOL, title: 'Vite', text: 'A dev server that reloads `instantly`.', kind: 'tech' } as never)
-    expect(answered).toMatchObject({ result: 'Explicação mostrada no painel (1 nesta sessão).' })
+    expect(answered).toMatchObject({ result: 'ok' })
     expect(opened.at(-1)).toMatchObject({ id: 'claude-tools', columns: 80 })
     expect(opened.at(-1)?.focus).toBeUndefined()
-    expect(await menu.find({ text: /\[tech\]/ })).toBeDefined()
+    expect(await menu.find({ text: /● tech/ })).toBeDefined()
+    // Each note is a card framed in its kind's color.
+    const cards = (await menu.findAll({ type: 'Box' })).filter(b => b.props.borderColor === '#06b6d4')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]?.props.borderStyle).toBe('round')
     expect(await menu.find({ text: /Vite/ })).toBeDefined()
     expect((await menu.find({ type: 'Markdown' }))?.props.text).toMatch(/reloads/)
 
@@ -687,15 +740,38 @@ describe('learn tab', () => {
 
     // The labels follow the panel's language; the note keeps Claude's words.
     await menu.press({ key: 'lang-pt' })
-    expect(await menu.find({ text: /\[tecnologia\]/ })).toBeDefined()
+    expect(await menu.find({ text: /● tecnologia/ })).toBeDefined()
     expect((await menu.find({ type: 'Markdown' }))?.props.text).toMatch(/reloads/)
+  })
+
+  test('one explain call posts several notes, each why on its own line', async ($, on) => {
+    engineKeeps(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'learn-on' })
+
+    const notes = [
+      { title: 'Vite', text: 'A dev server.', why: 'It reloads fast.', kind: 'tech' },
+      { title: 'Bun', text: 'Runs the tests.' },
+      { text: 'no title' },
+    ]
+    expect(await $.tool.call({ tool: LEARN_TOOL, notes } as never)).toMatchObject({ result: 'ok; skipped note 3: explain needs a non-empty title.' })
+    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(2)
+    expect(await menu.find({ text: /→ why: / })).toBeDefined()
+    expect(await menu.find({ text: /It reloads fast/ })).toBeDefined()
+    await menu.press({ key: 'lang-pt' })
+    expect(await menu.find({ text: /→ por quê: / })).toBeDefined()
+
+    expect(await $.tool.call({ tool: LEARN_TOOL, notes: [] } as never)).toMatchObject({ deny: 'explain needs at least one note.' })
   })
 
   test('with learn mode off a call is kept but the menu stays closed', async ($, on) => {
     const { opened } = engineKeeps(on)
     const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
     const answered = await $.tool.call({ tool: LEARN_TOOL, title: 'npm', text: 'Installs packages.' } as never)
-    expect(answered).toMatchObject({ result: 'Explicação mostrada no painel (1 nesta sessão).' })
+    expect(answered).toMatchObject({ result: 'ok' })
     expect(opened).toHaveLength(0)
     expect(await menu.find({ key: 'learn-on' })).toBeUndefined()
   })
@@ -740,14 +816,14 @@ describe('learn tab', () => {
     await menu.press({ key: 'tab-learn' })
     await menu.press({ key: 'learn-on' })
     for (let i = 0; i < 30; i++) await $.tool.call({ tool: LEARN_TOOL, title: `Note ${i}`, text: 'Short.' } as never)
-    // A 26-row pane leaves the list 9 rows: the three newest three-row notes.
-    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(3)
+    // A 26-row pane leaves the list 9 rows: the two newest four-row cards.
+    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(2)
     expect(await menu.find({ text: /Note 29/ })).toBeDefined()
-    expect(await menu.find({ text: /Note 26/ })).toBeUndefined()
+    expect(await menu.find({ text: /Note 27/ })).toBeUndefined()
     for (const key of ['tabs', 'h-Learn mode', 'learn-onoff']) expect((await menu.find({ key }))?.props.flexShrink).toBe(0)
     expect((await menu.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-end')
 
-    await $.tool.call({ tool: LEARN_TOOL, title: 'A long one', text: 'x'.repeat(600) } as never)
+    await $.tool.call({ tool: LEARN_TOOL, title: 'A long one', text: 'line\n'.repeat(10) } as never)
     expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(1)
     expect(await menu.find({ text: /A long one/ })).toBeDefined()
     expect((await menu.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-start')
