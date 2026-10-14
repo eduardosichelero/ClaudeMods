@@ -635,10 +635,15 @@ describe('learn tab', () => {
     expect(await menu.find({ key: 'learn-on' })).toBeUndefined()
   })
 
-  test('on a terminal too narrow for the pane, a new explanation says once how to open it', async ($, on) => {
+  test('on a terminal too narrow for the pane, a new explanation says once how to open it, and that works', async ($, on) => {
     mock.store(on)
     on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
-    on('ui.open', () => ({ value: { isPlaced: false as const, reason: 'under 144 columns' } }))
+    // An open the mod makes on its own waits undrawn; one the person asks for is placed.
+    const opened: PaneOpenArgs[] = []
+    on('ui.open', (_$, e) => {
+      opened.push(e)
+      return { value: e.focus ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'under 144 columns' } }
+    })
     on('ui.close', () => ({ value: undefined }))
     const toasts: string[] = []
     on('ui.toast', (_$, e) => (toasts.push(e.text), { value: undefined }))
@@ -651,10 +656,15 @@ describe('learn tab', () => {
     await corner.press({ key: 'tools-toggle' })
 
     await $.tool.call({ tool: LEARN_TOOL, title: 'Vite', text: 'A dev server.' } as never)
-    // The waiting pane closed again, so the next explanation tries to open it again.
-    await corner.press({ key: 'tools-toggle' })
     await $.tool.call({ tool: LEARN_TOOL, title: 'React', text: 'A UI library.' } as never)
     expect(toasts.filter(t => t.includes('Nova explicação em Aprender'))).toHaveLength(1)
+    // The pane that could not be placed is not left waiting: the corner shows it closed.
+    expect((await corner.find({ key: 'tools-toggle' }))?.text).toMatch(/▲/)
+
+    // What the toast says to do opens the tab, with the keyboard, and shows both notes.
+    await $.command.run({ command: 'tools', args: 'learn' } as never)
+    expect(opened.at(-1)).toMatchObject({ id: 'claude-tools', focus: true })
+    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(2)
   })
 
   test('a /clear empties the Learn tab and keeps learn mode', async ($, on) => {

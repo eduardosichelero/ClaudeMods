@@ -800,13 +800,17 @@ async function setLearnOn($: EngineInterface, isOn: boolean) {
 let learnToastShown = false
 
 // Opens the menu on the Learn tab for a new explanation, without taking the
-// keyboard, unless the menu is already open; on a terminal too narrow for a
-// pane opened unasked, says once how to open it.
+// keyboard, unless the menu is already open. On a terminal too narrow for a
+// pane opened unasked, the pane is not left waiting undrawn (the corner and
+// /tools learn then open it as for a closed menu), and the toast says once how.
 async function showLearn($: EngineInterface) {
   if ((await read($, menu)) !== null) return
   await update($, menu, () => 'learn')
   const opened = await $.ui.open(paneFor('learn')).catch(() => null)
-  if (opened?.isPlaced === false && !learnToastShown) {
+  if (opened?.isPlaced === true) return
+  await $.ui.close({ id: PANE }).catch(() => {})
+  await update($, menu, () => null)
+  if (opened !== null && !learnToastShown) {
     learnToastShown = true
     $.ui.toast(phrase(await read($, lang), 'learnToast'))
   }
