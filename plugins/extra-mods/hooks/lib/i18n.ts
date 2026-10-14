@@ -46,6 +46,16 @@ const EN = {
   m_auto: 'auto',
   m_dontAsk: "don't ask",
   m_bypassPermissions: 'bypass permissions',
+  tabLearn: 'Learn',
+  learnMode: 'Learn mode',
+  learnNote: 'On: Claude explains here the technologies and steps it picks. Off: it works as usual.',
+  learnEmptyOn: 'No explanations yet: ask Claude for something.',
+  learnEmptyOff: 'Turn it on for Claude to explain what it does.',
+  learnNewer: '↓ {n} newer',
+  k_tech: 'tech',
+  k_concept: 'concept',
+  k_step: 'step',
+  learnToast: 'New explanation in Learn: open it with /tools learn',
 }
 
 export type Phrase = keyof typeof EN
@@ -89,6 +99,16 @@ const PT: Record<Phrase, string> = {
   m_auto: 'auto',
   m_dontAsk: 'não perguntar',
   m_bypassPermissions: 'ignorar permissões',
+  tabLearn: 'Aprender',
+  learnMode: 'Modo Aprender',
+  learnNote: 'Ligado: o Claude explica aqui as tecnologias e os passos que escolhe. Desligado: trabalha como sempre.',
+  learnEmptyOn: 'Nenhuma explicação ainda: peça algo ao Claude.',
+  learnEmptyOff: 'Ligue o modo para o Claude explicar o que faz.',
+  learnNewer: '↓ {n} mais recentes',
+  k_tech: 'tecnologia',
+  k_concept: 'conceito',
+  k_step: 'passo',
+  learnToast: 'Nova explicação em Aprender: abra com /tools learn',
 }
 
 const PHRASES: Record<Lang, Record<Phrase, string>> = { en: EN, pt: PT }

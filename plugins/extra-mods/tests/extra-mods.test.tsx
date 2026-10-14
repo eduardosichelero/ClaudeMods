@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, PaneOpenArgs } from 'claude-code'
 
 import {
   findProfile,
@@ -217,6 +217,23 @@ const engineDraws = (on: On) => {
 const isChosen = async (menu: { find: (q: { key: string }) => Promise<{ props: Record<string, unknown> } | undefined> }, key: string) =>
   (await menu.find({ key: `${key}-box` }))?.props.borderColor === 'claude'
 
+// The engine's drawing, a store the test reads back and every pane open the mod asked for.
+const engineKeeps = (on: On, entries: Record<string, unknown> = {}) => {
+  const kept = new Map<string, unknown>(Object.entries(entries))
+  on('store.get', (_$, e) => ({ value: kept.get(e.key) }))
+  on('store.set', (_$, e) => (kept.set(e.key, e.value), { value: undefined }))
+  on('store.delete', (_$, e) => (kept.delete(e.key), { value: undefined }))
+  on('store.keys', () => ({ value: [...kept.keys()] }))
+  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
+  const opened: PaneOpenArgs[] = []
+  on('ui.open', (_$, e) => (opened.push(e), { value: { isPlaced: true as const } }))
+  on('ui.close', () => ({ value: undefined }))
+  return { kept, opened }
+}
+
+// The prompt hint as a 200-column fullscreen terminal draws it.
+const wideHint = { ...hint, viewport: { columns: 200, rows: 50, isFullscreen: true } }
+
 describe('toolbox', () => {
   test('the corner button opens the menu in its pane', async ($, on) => {
     engineDraws(on)
@@ -228,7 +245,7 @@ describe('toolbox', () => {
 
       await corner.press({ key: 'tools-toggle' })
       expect((await corner.find({ key: 'tools-toggle' }))?.text).toMatch(/▼/)
-      for (const key of ['tab-zen', 'tab-themes', 'tab-mode', 'tab-status', 'tools-close', 'lang-pt']) {
+      for (const key of ['tab-zen', 'tab-themes', 'tab-mode', 'tab-status', 'tab-learn', 'tools-close', 'lang-pt']) {
         expect(await menu.find({ key })).toBeDefined()
       }
       await corner.press({ key: 'tools-toggle' })
@@ -491,5 +508,51 @@ describe('learn notes', () => {
     expect(learnPrompt('pt')).toMatch(/em português/)
     expect(learnPrompt('en')).toMatch(/mcp__extra-mods__explain/)
     expect(learnPrompt('en')).toMatch(/in English/)
+  })
+})
+
+describe('learn tab', () => {
+  test('the Learn tab turns learn mode on and keeps it for later sessions', async ($, on) => {
+    const { kept } = engineKeeps(on)
+    for (const surface of SURFACES) {
+      const corner = await $.ui.mount({ plugin: PLUGIN, surface, ...hint })
+      const menu = await $.ui.mount({ plugin: PLUGIN, surface, ...pane })
+      await corner.press({ key: 'tools-toggle' })
+      await menu.press({ key: 'tab-learn' })
+      expect(await isChosen(menu, 'learn-off')).toBe(true)
+      expect(await menu.find({ text: /Turn it on for Claude/ })).toBeDefined()
+      await menu.press({ key: 'learn-on' })
+      expect(await isChosen(menu, 'learn-on')).toBe(true)
+      expect(kept.get('learnOn')).toBe(true)
+      expect(await menu.find({ text: /No explanations yet/ })).toBeDefined()
+      await menu.press({ key: 'learn-off' })
+      expect(kept.get('learnOn')).toBe(false)
+      await corner.press({ key: 'tools-toggle' })
+      await corner.unmount()
+      await menu.unmount()
+    }
+  })
+
+  test('the Learn tab opens wide and stays open on Esc; the other tabs as before', async ($, on) => {
+    const { opened } = engineKeeps(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    expect(opened.at(-1)).toMatchObject({ id: 'claude-tools', columns: 56, closeOnEscape: true, focus: true })
+    await menu.press({ key: 'tab-learn' })
+    expect(opened.at(-1)).toMatchObject({ id: 'claude-tools', columns: 80 })
+    expect(opened.at(-1)?.closeOnEscape).toBeUndefined()
+    await menu.press({ key: 'tab-zen' })
+    expect(opened.at(-1)).toMatchObject({ columns: 56, closeOnEscape: true })
+  })
+
+  test('/tools learn opens the menu on the Learn tab', async ($, on) => {
+    const { opened } = engineKeeps(on)
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    // The kit's $ takes the command's whole input; the engine stamps origin and presentation.
+    await $.command.run({ command: 'tools', args: 'learn' } as never)
+    expect(await menu.find({ key: 'learn-on' })).toBeDefined()
+    expect(opened.at(-1)?.closeOnEscape).toBeUndefined()
+    expect(opened.at(-1)?.columns).toBeGreaterThanOrEqual(56)
   })
 })

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderChildren, RenderInput, Timer } from 'claude-code'
+import type { EngineInterface, PaneOpenArgs, Register, RenderChildren, RenderInput, Timer } from 'claude-code'
 
-import type { Effort, Lang, Panel, RateLimit, StatusSnapshot, ThemeEntry, ZenColors, ZenStep, ZenTask, ZenTheme } from '../types'
+import type { Effort, Lang, LearnNote, Panel, RateLimit, StatusSnapshot, ThemeEntry, ZenColors, ZenStep, ZenTask, ZenTheme } from '../types'
 import { EFFORT_HEAT, EFFORTS, type Mode, MODELS, MODES, modeLabel, modelFamily } from './lib/modes'
 import { isLang, LANGS, modeName, phrase, type Phrase } from './lib/i18n'
 import {
@@ -47,6 +47,7 @@ import {
   ZEN_TOOL_SCHEMA,
   ZEN_THEMES,
 } from './lib/zen'
+import { KIND_COLORS, learnColumns, visibleNotes } from './lib/learn'
 
 // Every value the drawings read. Settings worth keeping across sessions are
 // mirrored to $.store under the same key.
@@ -78,6 +79,9 @@ const status = atom({ plugin: 'extra-mods', key: 'status' } as const, null)
 const lastResponseAt = atom({ plugin: 'extra-mods', key: 'lastResponseAt' } as const, null)
 const lang = atom({ plugin: 'extra-mods', key: 'lang' } as const, 'en')
 const statusClock = atom({ plugin: 'extra-mods', key: 'statusClock' } as const, 0)
+const learnOn = atom({ plugin: 'extra-mods', key: 'learnOn' } as const, false)
+const notes = atom({ plugin: 'extra-mods', key: 'notes' } as const, [] as LearnNote[])
+const notesScroll = atom({ plugin: 'extra-mods', key: 'notesScroll' } as const, 0)
 
 // The menu's pane: a sidebar in the fullscreen layout, a block above the prompt otherwise.
 // Claude's progress tool, as the model calls it.
@@ -92,6 +96,18 @@ const MENU_NAME = 'extra-mods'
 const MODE_LABEL_COLUMNS = 22
 // The slug of the Claude Code theme the mod writes: ~/.claude/themes/extra-mods.json.
 const CLAUDE_THEME = 'extra-mods'
+
+// The terminal's width as last seen (the prompt hint's viewport, a command's
+// presentation): what the Learn tab's 40% is taken of.
+let terminalColumns: number | undefined
+
+// How the menu's pane opens for a tab: the Learn tab wide (40% of the terminal)
+// and kept open on Esc, so it stays beside the work; every other tab as before.
+function paneFor(panel: Panel): PaneOpenArgs {
+  return panel === 'learn'
+    ? { id: PANE, title: MENU_NAME, rows: PANE_SIZE.rows, columns: learnColumns(terminalColumns ?? 0) }
+    : { id: PANE, title: MENU_NAME, closeOnEscape: true, ...PANE_SIZE }
+}
 
 // Windows Terminal's built-in schemes, by name: their backgrounds.
 const WT_BUILTIN_BACKGROUNDS: Record<string, string> = {
@@ -530,12 +546,14 @@ async function loadSettings($: EngineInterface) {
     zenCustom: (await $.store.get('zenCustom')) as ZenColors | undefined,
     effort: (await $.store.get('effort')) as Effort | undefined,
     lang: await $.store.get('lang'),
+    learnOn: (await $.store.get('learnOn')) as boolean | undefined,
   }
   if (saved.zenOn !== undefined) await update($, zenOn, () => saved.zenOn!)
   if (saved.zenTheme !== undefined && ZEN_THEMES.includes(saved.zenTheme)) await update($, zenTheme, () => saved.zenTheme!)
   if (saved.zenCustom !== undefined) await update($, zenCustom, () => saved.zenCustom!)
   if (saved.effort !== undefined && EFFORTS.includes(saved.effort)) await update($, effort, () => saved.effort!)
   if (isLang(saved.lang)) await update($, lang, () => saved.lang as Lang)
+  if (typeof saved.learnOn === 'boolean') await update($, learnOn, () => saved.learnOn!)
   try {
     const { permissions } = await $.settings.read({ source: 'user' })
     const configured = (permissions as { defaultMode?: string } | undefined)?.defaultMode
@@ -696,9 +714,12 @@ async function drawZenBand($: EngineInterface, e: RenderInput<'AbovePrompt'>) {
   )
 }
 
-// Moves the menu to another tab.
+// Moves the menu to another tab. The Learn tab and the others open the pane
+// differently, so a move into or out of it opens the pane again as the tab asks.
 async function goTo($: EngineInterface, panel: Panel) {
+  const before = await read($, menu)
   await update($, menu, () => panel)
+  if (panel !== before && (panel === 'learn' || before === 'learn')) await $.ui.open(paneFor(panel))
   if (panel === 'themes') {
     await revealKept($)
     void ensureThemes($)
@@ -718,7 +739,7 @@ async function toggleMenu($: EngineInterface, panel: Panel = 'zen') {
     await revealKept($)
     void ensureThemes($)
   }
-  await $.ui.open({ id: PANE, title: MENU_NAME, focus: true, closeOnEscape: true, ...PANE_SIZE })
+  await $.ui.open({ ...paneFor(panel), focus: true })
 }
 
 // The theme list scrolls on its own, inside a pane exactly the body's height,
@@ -753,11 +774,19 @@ async function setLang($: EngineInterface, next: Lang) {
   await $.store.set('lang', next)
 }
 
+// Learn mode, kept across sessions: on, Claude is asked to explain its choices
+// with the explain tool; off, it works as it would without the mod.
+async function setLearnOn($: EngineInterface, isOn: boolean) {
+  await update($, learnOn, () => isOn)
+  await $.store.set('learnOn', isOn)
+}
+
 const TABS: readonly { panel: Exclude<Panel, 'main'>; name: Phrase }[] = [
   { panel: 'zen', name: 'tabZen' },
   { panel: 'themes', name: 'tabThemes' },
   { panel: 'mode', name: 'tabMode' },
   { panel: 'status', name: 'tabStatus' },
+  { panel: 'learn', name: 'tabLearn' },
 ]
 
 // Text in the rainbow, one color a letter.
@@ -767,7 +796,7 @@ const rainbow = (text: string) => [...text].map((ch, i) => ({ ch, color: RAINBOW
 // Each setting is a chip, one per Button, so the arrow keys walk them.
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel) {
   if (e.surface !== 'terminal' && e.surface !== 'desktop') return null
-  const { Box, Text, Button, Input } = $.ui.resolve(e)
+  const { Box, Text, Button, Input, Markdown } = $.ui.resolve(e)
   const tab: Exclude<Panel, 'main'> = panel === 'main' ? 'zen' : panel
   const lng = await read($, lang)
   const t = (key: Phrase, vars?: Record<string, string | number>) => phrase(lng, key, vars)
@@ -1037,6 +1066,48 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
     )
   }
 
+  // Learn: the switch, then the session's explanations, newest at the bottom.
+  // The list keeps the page's height, cut at its top, so the tabs and the
+  // language row stay put; the wheel walks back through older notes.
+  if (tab === 'learn') {
+    const isLearnOn = await read($, learnOn)
+    const list = await read($, notes)
+    const scroll = await read($, notesScroll)
+    rows.push(
+      heading(t('learnMode')),
+      chips('learn-onoff', [
+        chip('learn-on', t('on'), isLearnOn, () => setLearnOn($, true)),
+        chip('learn-off', t('off'), !isLearnOn, () => setLearnOn($, false)),
+      ]),
+      <Text key="learn-note" dimColor>
+        {t('learnNote')}
+      </Text>,
+      <Box key="learn-list" flexDirection="column" justifyContent="flex-end" flexGrow={1} flexShrink={1} overflow="hidden">
+        {list.length === 0 ? (
+          <Text key="learn-empty" dimColor>
+            {t(isLearnOn ? 'learnEmptyOn' : 'learnEmptyOff')}
+          </Text>
+        ) : (
+          visibleNotes(list, scroll).map(note => (
+            <Box key={`note-${note.id}`} flexDirection="column" marginTop={1} flexShrink={0}>
+              <Text>
+                <Text color={KIND_COLORS[note.kind]}>[{t(`k_${note.kind}`)}]</Text> <Text bold>{note.title}</Text>
+              </Text>
+              <Markdown text={note.text} />
+            </Box>
+          ))
+        )}
+      </Box>,
+    )
+    if (scroll > 0) {
+      rows.push(
+        <Text key="learn-newer" dimColor>
+          {t('learnNewer', { n: scroll })}
+        </Text>,
+      )
+    }
+  }
+
   // Folder tabs: the chosen one framed and open into the page, the rest
   // dim on the rule, the close at the end of the row.
   const width = Math.max(10, columns - 2)
@@ -1087,20 +1158,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
     </Box>
   )
 
-  // The themes page is exactly the body's height, its list scrolling inside;
-  // the other pages grow, the footer at the bottom while they fit.
-  const isThemes = tab === 'themes'
+  // The themes and learn pages are exactly the body's height, their lists
+  // scrolling inside; the other pages grow, the footer at the bottom while they fit.
+  const isFixed = tab === 'themes' || tab === 'learn'
   return (
     <Box
       flexDirection="column"
       paddingX={1}
       backgroundColor={background}
       width={e.props.bodyColumns}
-      height={isThemes ? e.props.scroll.bodyRows : undefined}
-      minHeight={isThemes ? undefined : e.props.scroll.bodyRows}
+      height={isFixed ? e.props.scroll.bodyRows : undefined}
+      minHeight={isFixed ? undefined : e.props.scroll.bodyRows}
     >
       {tabStrip}
-      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow={isThemes ? 'hidden' : undefined}>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow={isFixed ? 'hidden' : undefined}>
         {rows}
       </Box>
       {footer}
@@ -1123,6 +1194,7 @@ function hintText(hint: string) {
 }
 
 async function drawPromptHint($: EngineInterface, e: RenderInput<'PromptHint'>) {
+  if (e.viewport !== undefined) terminalColumns = e.viewport.columns
   const { Box, Text, Button } = $.ui.resolve(e)
   const isOpen = (await read($, menu)) !== null
   const label = `◆ ${MENU_NAME} ${isOpen ? '▼' : '▲'}`
@@ -1332,7 +1404,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'tools',
       description: 'Open the extra-mods menu: Zen mode, themes, mode and status line',
-      argumentHint: '[zen|themes|mode|status|debug]',
+      argumentHint: '[zen|themes|mode|status|learn|debug]',
       immediate: true,
     })
     return started
@@ -1340,11 +1412,13 @@ export const register: Register = on => {
 
   on('command.run', { command: 'tools' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
+    // The kit runs a command with no presentation; a session always has one.
+    terminalColumns = e.presentation?.columns ?? terminalColumns
     if (arg === 'debug') {
       const rows = await $.config.list()
       return { text: rows.map(r => `${r.key} (${r.kind}) = ${JSON.stringify(r.value)}`).join('\n') }
     }
-    const panel: Panel = arg === 'themes' || arg === 'mode' || arg === 'status' ? arg : 'zen'
+    const panel: Panel = arg === 'themes' || arg === 'mode' || arg === 'status' || arg === 'learn' ? arg : 'zen'
     if ((await read($, menu)) !== null) await goTo($, panel)
     else await toggleMenu($, panel)
     return { text: 'extra-mods is open.' }

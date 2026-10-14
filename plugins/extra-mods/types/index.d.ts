@@ -1,4 +1,4 @@
-export type Panel = 'main' | 'zen' | 'themes' | 'mode' | 'status'
+export type Panel = 'main' | 'zen' | 'themes' | 'mode' | 'status' | 'learn'
 
 export type ZenTheme = 'blue' | 'dark' | 'light' | 'green' | 'rainbow' | 'custom'
 
@@ -70,6 +70,9 @@ declare module 'claude-code' {
       paneBg: string | null
       defaultModeChosen: boolean
       lang: Lang
+      learnOn: boolean
+      notes: LearnNote[]
+      notesScroll: number
     }
   }
 }
