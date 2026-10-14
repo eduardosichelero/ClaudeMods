@@ -441,6 +441,33 @@ describe('toolbox', () => {
     expect(await menu.drawn()).toMatchObject({ props: { backgroundColor: '#000003' } })
   })
 
+  test("the desktop draws the pane on its own background, in its own theme's text", async ($, on) => {
+    engineDraws(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...hint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    for (const tab of ['tab-zen', 'tab-themes', 'tab-mode', 'tab-status', 'tab-learn']) {
+      await menu.press({ key: tab })
+      const drawn = await menu.drawn()
+      expect(drawn).toMatchObject({ type: 'Box' })
+      expect(drawn?.type === 'Box' ? drawn.props?.backgroundColor : 'not a Box').toBeUndefined()
+    }
+  })
+
+  test('the desktop frames the chosen tab as a chip, not in box-drawing glyphs', async ($, on) => {
+    engineDraws(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...hint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'desktop', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    expect(await isChosen(menu, 'tab-learn')).toBe(true)
+    expect(await isChosen(menu, 'tab-zen')).toBe(false)
+    expect(await menu.find({ text: /[╭╮╯╰│]/ })).toBeUndefined()
+    // The terminal keeps its folder tabs.
+    const terminal = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    expect(await terminal.find({ text: /╭/ })).toBeDefined()
+  })
+
   test("Claude's zen_progress calls fill the band", async ($, on) => {
     engineDraws(on)
     mock.clock(on)

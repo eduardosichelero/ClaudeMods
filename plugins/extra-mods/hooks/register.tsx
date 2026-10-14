@@ -836,9 +836,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
   const tab: Exclude<Panel, 'main'> = panel === 'main' ? 'zen' : panel
   const lng = await read($, lang)
   const t = (key: Phrase, vars?: Record<string, string | number>) => phrase(lng, key, vars)
-  const background = (await read($, paneBg)) ?? PANE_BACKGROUND
+  // The terminal's background, painted on the terminal alone: the desktop draws
+  // its own text and native buttons in its own theme, dark on a light one.
+  const background = e.surface === 'terminal' ? ((await read($, paneBg)) ?? PANE_BACKGROUND) : undefined
   const columns = e.props.bodyColumns ?? PANE_SIZE.columns
-  const rule = <Text dimColor>{'─'.repeat(Math.max(10, columns - 2))}</Text>
+  const rule = (
+    <Text dimColor wrap="truncate">
+      {'─'.repeat(Math.max(10, columns - 2))}
+    </Text>
+  )
 
   // A chip: a framed button, the chosen one framed and written in the accent
   // color (or `frame`), the rest in a dim frame. The frame's key is the
@@ -1170,7 +1176,30 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
     return { p, name, isOn, inner, cells: inner.length + (isOn ? 2 : 0) }
   })
   const used = cells.reduce((n, c) => n + c.cells, 0)
-  const tabStrip = (
+  const close = <Button key="tools-close" plain dimColor label={t(tab === 'learn' ? 'closeLearn' : 'close')} onPress={() => toggleMenu($)} />
+  // The desktop draws native buttons in its own font, so glyphs drawn to frame
+  // them miss: its tabs are chips, the chosen one framed in the accent color.
+  const desktopTabs = (
+    <Box key="tabs" flexDirection="column" flexShrink={0}>
+      <Box flexWrap="wrap" columnGap={1} alignItems="center">
+        {cells.map(c =>
+          framed(
+            `tab-${c.p}`,
+            c.isOn,
+            <Button key={`tab-${c.p}`} plain label={t(c.name)} autoFocus={c.isOn ? true : undefined} onPress={() => goTo($, c.p)}>
+              <Text bold={c.isOn} color={c.isOn ? 'claude' : undefined}>
+                {t(c.name)}
+              </Text>
+            </Button>,
+          ),
+        )}
+        <Box flexGrow={1} />
+        {close}
+      </Box>
+      {rule}
+    </Box>
+  )
+  const tabStrip = e.surface === 'desktop' ? desktopTabs : (
     <Box key="tabs" flexDirection="column" flexShrink={0}>
       <Text dimColor>{cells.map(c => (c.isOn ? `╭${'─'.repeat(c.inner.length)}╮` : ' '.repeat(c.cells))).join('')}</Text>
       <Box>
@@ -1191,7 +1220,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
           </Box>
         ))}
         <Box flexGrow={1} />
-        <Button key="tools-close" plain dimColor label={t(tab === 'learn' ? 'closeLearn' : 'close')} onPress={() => toggleMenu($)} />
+        {close}
       </Box>
       <Text dimColor>
         {cells.map(c => (c.isOn ? `╯${' '.repeat(c.inner.length)}╰` : '─'.repeat(c.cells))).join('')}
