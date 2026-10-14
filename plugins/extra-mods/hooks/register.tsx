@@ -47,7 +47,17 @@ import {
   ZEN_TOOL_SCHEMA,
   ZEN_THEMES,
 } from './lib/zen'
-import { KIND_COLORS, learnColumns, visibleNotes } from './lib/learn'
+import {
+  addNote,
+  KIND_COLORS,
+  learnColumns,
+  learnPrompt,
+  LEARN_TOOL_DESCRIPTION,
+  LEARN_TOOL_NAME,
+  LEARN_TOOL_SCHEMA,
+  toNote,
+  visibleNotes,
+} from './lib/learn'
 
 // Every value the drawings read. Settings worth keeping across sessions are
 // mirrored to $.store under the same key.
@@ -86,6 +96,8 @@ const notesScroll = atom({ plugin: 'extra-mods', key: 'notesScroll' } as const, 
 // The menu's pane: a sidebar in the fullscreen layout, a block above the prompt otherwise.
 // Claude's progress tool, as the model calls it.
 const ZEN_TOOL = 'mcp__extra-mods__zen_progress'
+// Claude's explain tool, as the model calls it.
+const LEARN_TOOL = 'mcp__extra-mods__explain'
 
 const PANE = 'claude-tools'
 const PANE_SIZE = { rows: 26, columns: 56 }
@@ -775,10 +787,28 @@ async function setLang($: EngineInterface, next: Lang) {
 }
 
 // Learn mode, kept across sessions: on, Claude is asked to explain its choices
-// with the explain tool; off, it works as it would without the mod.
+// with the explain tool, which then sits in the prompt's tool list; off, the
+// tool waits behind ToolSearch and Claude works as it would without the mod.
 async function setLearnOn($: EngineInterface, isOn: boolean) {
   await update($, learnOn, () => isOn)
   await $.store.set('learnOn', isOn)
+  $.ui.invalidate('tool.describe')
+}
+
+// Whether this session said how to open a Learn tab its terminal had no room for.
+let learnToastShown = false
+
+// Opens the menu on the Learn tab for a new explanation, without taking the
+// keyboard, unless the menu is already open; on a terminal too narrow for a
+// pane opened unasked, says once how to open it.
+async function showLearn($: EngineInterface) {
+  if ((await read($, menu)) !== null) return
+  await update($, menu, () => 'learn')
+  const opened = await $.ui.open(paneFor('learn')).catch(() => null)
+  if (opened?.isPlaced === false && !learnToastShown) {
+    learnToastShown = true
+    $.ui.toast(phrase(await read($, lang), 'learnToast'))
+  }
 }
 
 const TABS: readonly { panel: Exclude<Panel, 'main'>; name: Phrase }[] = [
@@ -1401,6 +1431,14 @@ export const register: Register = on => {
     try {
       await $.tool.register({ name: ZEN_TOOL_NAME, description: ZEN_TOOL_DESCRIPTION, inputSchema: ZEN_TOOL_SCHEMA })
     } catch {}
+    try {
+      await $.tool.register({
+        name: LEARN_TOOL_NAME,
+        description: LEARN_TOOL_DESCRIPTION,
+        inputSchema: LEARN_TOOL_SCHEMA,
+        isDeferred: false,
+      })
+    } catch {}
     await $.command.register({
       name: 'tools',
       description: 'Open the extra-mods menu: Zen mode, themes, mode and status line',
@@ -1563,6 +1601,33 @@ export const register: Register = on => {
       })
     }
     return next(e)
+  })
+
+  // Learn: while it is on, the system prompt ends with the ask to explain, in
+  // the panel's language.
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (!(await read($, learnOn))) return composed
+    const section = { id: 'extra-mods:learn', text: learnPrompt(await read($, lang)), scope: 'session' as const }
+    return { sections: [...composed.sections, section] }
+  }).catch(($, e, next) => next(e))
+
+  // Learn: the explain tool sits in the prompt's list while learn mode is on,
+  // behind ToolSearch while it is off.
+  on('tool.describe', { tool: LEARN_TOOL }, async ($, e, next) => ({
+    ...(await next(e)),
+    isDeferred: !(await read($, learnOn)),
+  })).catch(($, e, next) => next(e))
+
+  // Learn: Claude's explanations, kept as the tab's notes. One missing its
+  // title or text is refused, so Claude sends it again whole.
+  on('tool.call', { tool: LEARN_TOOL }, async ($, e) => {
+    const made = toNote(e, e.tool_use_id, Date.now())
+    if ('error' in made) return { deny: made.error }
+    const list = await update($, notes, l => addNote(l, made.note))
+    await update($, notesScroll, () => 0)
+    if (await read($, learnOn)) await showLearn($)
+    return { result: `Explicação mostrada no painel (${list.length} nesta sessão).` }
   })
 
   // Mode: the chosen effort rides on every model request of the session; the

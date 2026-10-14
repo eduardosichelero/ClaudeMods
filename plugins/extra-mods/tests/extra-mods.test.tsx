@@ -234,6 +234,21 @@ const engineKeeps = (on: On, entries: Record<string, unknown> = {}) => {
 // The prompt hint as a 200-column fullscreen terminal draws it.
 const wideHint = { ...hint, viewport: { columns: 200, rows: 50, isFullscreen: true } }
 
+const LEARN_TOOL = 'mcp__extra-mods__explain'
+
+// What a system prompt is composed for, as the engine hands it to prompt.compose.
+const COMPOSE = {
+  model: 'claude-opus-5-5',
+  promptModel: 'claude-opus-5-5',
+  surfaces: ['terminal' as const],
+  tools: [],
+  outputStyle: null,
+  traits: [],
+}
+
+// The engine's own description of the explain tool, before the mod places it.
+const EXPLAIN_DESCRIBED = { tool: LEARN_TOOL, description: 'Posts a short explanation.', provider: { plugin: 'extra-mods', tier: 'user' } }
+
 describe('toolbox', () => {
   test('the corner button opens the menu in its pane', async ($, on) => {
     engineDraws(on)
@@ -554,5 +569,91 @@ describe('learn tab', () => {
     expect(await menu.find({ key: 'learn-on' })).toBeDefined()
     expect(opened.at(-1)?.closeOnEscape).toBeUndefined()
     expect(opened.at(-1)?.columns).toBeGreaterThanOrEqual(56)
+  })
+
+  test("while learn mode is on, Claude's prompt asks for explanations and lists the tool", async ($, on) => {
+    engineKeeps(on)
+    on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' as const }] }))
+    on('tool.describe', (_$, e) => ({ description: e.description }))
+    const compose = async () => (await $.prompt.compose(COMPOSE)).sections
+    const deferred = async () => (await $.tool.describe(EXPLAIN_DESCRIBED as never)).isDeferred
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...hint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    expect((await compose()).map(s => s.id)).toEqual(['intro'])
+    expect(await deferred()).toBe(true)
+
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'learn-on' })
+    const section = (await compose()).at(-1)
+    expect(section).toMatchObject({ id: 'extra-mods:learn', scope: 'session' })
+    expect(section?.text).toMatch(/in English/)
+    expect(await deferred()).toBe(false)
+
+    await menu.press({ key: 'lang-pt' })
+    expect((await compose()).at(-1)?.text).toMatch(/em português/)
+
+    await menu.press({ key: 'learn-off' })
+    expect((await compose()).map(s => s.id)).toEqual(['intro'])
+    expect(await deferred()).toBe(true)
+  })
+
+  test("Claude's explain calls fill the Learn tab and open it beside the work", async ($, on) => {
+    const { opened } = engineKeeps(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'learn-on' })
+    await corner.press({ key: 'tools-toggle' })
+
+    const answered = await $.tool.call({ tool: LEARN_TOOL, title: 'Vite', text: 'A dev server that reloads `instantly`.', kind: 'tech' } as never)
+    expect(answered).toMatchObject({ result: 'Explicação mostrada no painel (1 nesta sessão).' })
+    expect(opened.at(-1)).toMatchObject({ id: 'claude-tools', columns: 80 })
+    expect(opened.at(-1)?.focus).toBeUndefined()
+    expect(await menu.find({ text: /\[tech\]/ })).toBeDefined()
+    expect(await menu.find({ text: /Vite/ })).toBeDefined()
+    expect((await menu.find({ type: 'Markdown' }))?.props.text).toMatch(/reloads/)
+
+    // A call missing its title is refused and keeps nothing.
+    const refused = await $.tool.call({ tool: LEARN_TOOL, text: 'no title' } as never)
+    expect(refused).toMatchObject({ deny: 'explain needs a non-empty title.' })
+    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(1)
+
+    // The labels follow the panel's language; the note keeps Claude's words.
+    await menu.press({ key: 'lang-pt' })
+    expect(await menu.find({ text: /\[tecnologia\]/ })).toBeDefined()
+    expect((await menu.find({ type: 'Markdown' }))?.props.text).toMatch(/reloads/)
+  })
+
+  test('with learn mode off a call is kept but the menu stays closed', async ($, on) => {
+    const { opened } = engineKeeps(on)
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    const answered = await $.tool.call({ tool: LEARN_TOOL, title: 'npm', text: 'Installs packages.' } as never)
+    expect(answered).toMatchObject({ result: 'Explicação mostrada no painel (1 nesta sessão).' })
+    expect(opened).toHaveLength(0)
+    expect(await menu.find({ key: 'learn-on' })).toBeUndefined()
+  })
+
+  test('on a terminal too narrow for the pane, a new explanation says once how to open it', async ($, on) => {
+    mock.store(on)
+    on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
+    on('ui.open', () => ({ value: { isPlaced: false as const, reason: 'under 144 columns' } }))
+    on('ui.close', () => ({ value: undefined }))
+    const toasts: string[] = []
+    on('ui.toast', (_$, e) => (toasts.push(e.text), { value: undefined }))
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...hint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'learn-on' })
+    await menu.press({ key: 'lang-pt' })
+    await corner.press({ key: 'tools-toggle' })
+
+    await $.tool.call({ tool: LEARN_TOOL, title: 'Vite', text: 'A dev server.' } as never)
+    // The waiting pane closed again, so the next explanation tries to open it again.
+    await corner.press({ key: 'tools-toggle' })
+    await $.tool.call({ tool: LEARN_TOOL, title: 'React', text: 'A UI library.' } as never)
+    expect(toasts.filter(t => t.includes('Nova explicação em Aprender'))).toHaveLength(1)
   })
 })
