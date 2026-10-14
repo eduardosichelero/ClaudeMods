@@ -26,7 +26,9 @@ import {
   learnColumns,
   learnPrompt,
   learnRows,
+  LEARN_LIMIT,
   LEARN_TOOL_DESCRIPTION,
+  MAX_EXPLAIN,
   MAX_NOTES,
   MAX_PER_CALL,
   nextAsk,
@@ -34,6 +36,7 @@ import {
   scrollNotes,
   toNote,
   toNotes,
+  underLimit,
 } from '../hooks/lib/learn'
 
 const PLUGIN = 'extra-mods'
@@ -628,6 +631,16 @@ describe('learn notes', () => {
     expect(learnAnswer(['note 2: x.'], ['Vite', 'React'])).toBe('ok; skipped note 2: x.; already shown: Vite, React')
   })
 
+  test('a session takes ten notes: the ones past them are left out and said', async () => {
+    const note = (title: string) => ({ id: title, title, text: 'x', kind: 'tech' as const, at: 0 })
+    expect(MAX_EXPLAIN).toBe(10)
+    expect(underLimit(8, [note('a'), note('b'), note('c')])).toEqual({ kept: [note('a'), note('b')], over: ['c'] })
+    expect(underLimit(10, [note('a')])).toEqual({ kept: [], over: ['a'] })
+    expect(learnAnswer([], [], ['c'])).toBe('ok; over the limit of 10 a session: c')
+    expect(LEARN_TOOL_DESCRIPTION).toMatch(/10 a session/)
+    expect(LEARN_LIMIT).toMatch(/limit of 10 explanations/)
+  })
+
   test('each typed request is numbered and headed by its first line', async () => {
     expect(nextAsk(null, 'add a login\nwith JWT')).toEqual({ n: 1, text: 'add a login' })
     expect(nextAsk({ n: 4, text: 'x' }, 'y'.repeat(200))).toMatchObject({ n: 5, text: `${'y'.repeat(79)}…` })
@@ -928,12 +941,13 @@ describe('learn tab', () => {
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
     await menu.press({ key: 'learn-on' })
-    for (let i = 0; i < 30; i++) await $.tool.call({ tool: LEARN_TOOL, title: `Note ${i}`, text: 'Short.' } as never)
+    // Nine, so the long one below still fits under the session's ten.
+    for (let i = 0; i < 9; i++) await $.tool.call({ tool: LEARN_TOOL, title: `Note ${i}`, text: 'Short.' } as never)
     for (const m of menus) {
       // A 26-row pane leaves the list 9 rows: the two newest four-row cards.
       expect(await m.findAll({ type: 'Markdown' })).toHaveLength(2)
-      expect(await m.find({ text: /Note 29/ })).toBeDefined()
-      expect(await m.find({ text: /Note 27/ })).toBeUndefined()
+      expect(await m.find({ text: /Note 8/ })).toBeDefined()
+      expect(await m.find({ text: /Note 6/ })).toBeUndefined()
       for (const key of ['tabs', 'h-Learn mode', 'learn-onoff']) expect((await m.find({ key }))?.props.flexShrink).toBe(0)
       expect((await m.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-end')
     }
@@ -983,5 +997,38 @@ describe('learn tab', () => {
       expect(await m.find({ type: 'Markdown' })).toBeUndefined()
       expect(await m.find({ text: /No explanations yet/ })).toBeDefined()
     }
+  })
+
+  test('a session takes 10 explanations, counted in the tab, then refuses more until a /clear', async ($, on) => {
+    engineKeeps(on, { statusOn: false })
+    on('env.get', () => ({ value: '/home/me' }))
+    on('fs.exists', () => ({ value: false }))
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('classic.SessionStart', () => ({}))
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...hint })
+    const menus = await mountMenus($)
+    const [menu] = menus
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'learn-on' })
+
+    for (let i = 1; i <= 8; i++) await $.tool.call({ tool: LEARN_TOOL, title: `Note ${i}`, text: 'Short.' } as never)
+    // A call that runs past the tenth keeps what fits and names the rest.
+    const notes = ['Note 9', 'Note 10', 'Note 11'].map(title => ({ title, text: 'Short.' }))
+    expect(await $.tool.call({ tool: LEARN_TOOL, notes } as never)).toMatchObject({ result: 'ok; over the limit of 10 a session: Note 11' })
+    for (const m of menus) expect(await m.find({ text: /10\/10 this session/ })).toBeDefined()
+
+    // Once full, every call is refused and kept nowhere.
+    const refused = (await $.tool.call({ tool: LEARN_TOOL, title: 'One more', text: 'Too many.' } as never)) as { deny?: string }
+    expect(refused.deny).toMatch(/limit of 10 explanations/)
+    for (const m of menus) expect(await m.find({ text: /One more/ })).toBeUndefined()
+
+    // A /clear starts the count over; the count follows the panel's language.
+    await $.classic.SessionStart({ source: 'clear' })
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'lang-pt' })
+    expect(await $.tool.call({ tool: LEARN_TOOL, title: 'Vite', text: 'Um servidor.' } as never)).toMatchObject({ result: 'ok' })
+    for (const m of menus) expect(await m.find({ text: /1\/10 nesta sessão/ })).toBeDefined()
   })
 })

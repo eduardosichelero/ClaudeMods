@@ -59,12 +59,15 @@ import {
   learnColumns,
   learnPrompt,
   learnRows,
+  LEARN_LIMIT,
   LEARN_TOOL_DESCRIPTION,
   LEARN_TOOL_NAME,
   LEARN_TOOL_SCHEMA,
+  MAX_EXPLAIN,
   nextAsk,
   scrollNotes,
   toNotes,
+  underLimit,
 } from './lib/learn'
 
 // Every value the drawings read. Settings worth keeping across sessions are
@@ -1143,7 +1146,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
     const room = learnRows(e.props.scroll.bodyRows, Math.ceil(t('learnNote').length / width), scroll > 0, tabRows)
     const { shown, isTall } = fitNotes(list, scroll, room, width)
     rows.push(
-      heading(t('learnMode')),
+      heading(t('learnMode'), <Text dimColor>{t('learnCount', { n: list.length, max: MAX_EXPLAIN })}</Text>),
       chips('learn-onoff', [
         chip('learn-on', t('on'), isLearnOn, () => setLearnOn($, true)),
         chip('learn-off', t('off'), !isLearnOn, () => setLearnOn($, false)),
@@ -1732,8 +1735,10 @@ export const register: Register = on => {
   // Learn: Claude's explanations, kept as the tab's notes under the request
   // they were posted in. The panel is the main conversation's: a subagent's
   // call is refused. A call with no whole note is refused too; otherwise the
-  // answer says only what it skipped and what was already shown (by title),
-  // so it costs Claude next to nothing to read and teaches it not to repeat.
+  // answer says only what it skipped, what was already shown (by title) and
+  // what the session's MAX_EXPLAIN left out, so it costs Claude next to
+  // nothing to read and teaches it not to repeat. Once the session is full
+  // every call is refused, so Claude stops asking until a /clear.
   on('tool.call', { tool: LEARN_TOOL }, async ($, e) => {
     if (e.agentId !== undefined) return { deny: 'explain is for the main conversation only; do not call it from a subagent.' }
     const made = toNotes(e, e.tool_use_id, Date.now())
@@ -1741,18 +1746,25 @@ export const register: Register = on => {
     const ask = await read($, learnAsk)
     const asked = ask === null ? made.notes : made.notes.map(n => ({ ...n, ask }))
     let repeated: string[] = []
+    let over: string[] = []
     let added = 0
+    let isFull = false
+    // Counted inside the write, so two calls at once cannot both take the last place.
     await update($, notes, l => {
+      if ((isFull = l.length >= MAX_EXPLAIN)) return l
       const { fresh, repeated: seen } = freshNotes(l, asked)
+      const { kept, over: left } = underLimit(l.length, fresh)
       repeated = seen
-      added = fresh.length
-      return fresh.reduce(addNote, l)
+      over = left
+      added = kept.length
+      return kept.reduce(addNote, l)
     })
+    if (isFull) return { deny: LEARN_LIMIT }
     if (added > 0) {
       await update($, notesScroll, () => 0)
       if (await read($, learnOn)) await showLearn($)
     }
-    return { result: learnAnswer(made.errors, repeated) }
+    return { result: learnAnswer(made.errors, repeated, over) }
   })
 
   // Mode: the chosen effort rides on every model request of the session; the

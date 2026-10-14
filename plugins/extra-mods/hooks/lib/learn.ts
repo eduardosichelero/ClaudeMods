@@ -14,6 +14,8 @@ export const MAX_PER_CALL = 5
 export const MAX_TITLE = 40
 export const MAX_TEXT = 300
 export const MAX_WHY = 200
+// The notes a session takes; past them every call is refused until a /clear.
+export const MAX_EXPLAIN = 10
 // The most of a request's text kept to head its notes.
 export const MAX_ASK = 80
 
@@ -26,7 +28,8 @@ export const LEARN_TOOL_DESCRIPTION =
   'Shows short notes in the Learn panel the user reads while you work. Send it in the same response as the ' +
   'tool call it explains, never on its own, with every note for that step in one call. Only for a technology, ' +
   'library, pattern or notable command the first time it comes up, or the start of a big step; at most 3 notes ' +
-  'per request; never for trivial actions like reading files, nor from a subagent. Each note: a title, one ' +
+  `per request and ${MAX_EXPLAIN} a session, so keep them for the choices that matter most; never for trivial ` +
+  'actions like reading files, nor from a subagent. Each note: a title, one ' +
   'sentence on what it is and does here and, when it helps, one on why it was picked.'
 
 export const LEARN_TOOL_SCHEMA = {
@@ -130,14 +133,26 @@ export function freshNotes(list: readonly LearnNote[], made: readonly LearnNote[
   )
 }
 
-// What the explain tool answers: "ok", then what it skipped and what it had
-// already shown, so Claude reads next to nothing and learns not to repeat.
-export const learnAnswer = (errors: readonly string[], repeated: readonly string[]) =>
+// What the explain tool answers: "ok", then what it skipped, what it had
+// already shown and what the session's limit left out, so Claude reads next to
+// nothing and learns not to repeat.
+export const learnAnswer = (errors: readonly string[], repeated: readonly string[], over: readonly string[] = []) =>
   [
     'ok',
     ...(errors.length === 0 ? [] : [`skipped ${errors.join(' ')}`]),
     ...(repeated.length === 0 ? [] : [`already shown: ${repeated.join(', ')}`]),
+    ...(over.length === 0 ? [] : [`over the limit of ${MAX_EXPLAIN} a session: ${over.join(', ')}`]),
   ].join('; ')
+
+// What a call is refused with once the session holds MAX_EXPLAIN notes.
+export const LEARN_LIMIT = `this session reached its limit of ${MAX_EXPLAIN} explanations; do not call explain again until a /clear.`
+
+// Of `fresh`, the notes that fit under MAX_EXPLAIN beside the `held` ones, and
+// the titles of the rest.
+export function underLimit(held: number, fresh: readonly LearnNote[]) {
+  const room = Math.max(0, MAX_EXPLAIN - held)
+  return { kept: fresh.slice(0, room), over: fresh.slice(room).map(n => n.title) }
+}
 
 // The request a typed prompt starts: the one after `last`, headed by the
 // prompt's first line.
