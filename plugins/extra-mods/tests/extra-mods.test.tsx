@@ -17,13 +17,18 @@ import { barCells, percentOf, stepLabel, visibleSteps } from '../hooks/lib/zen'
 import { backgroundPill, barFill, cacheState, CACHE_TTL_MS, colorFor, fmtDuration, fmtTokens } from '../hooks/lib/status'
 import {
   addNote,
+  askHeading,
+  askLine,
   fitNotes,
+  freshNotes,
+  learnAnswer,
   learnColumns,
   learnPrompt,
   learnRows,
   LEARN_TOOL_DESCRIPTION,
   MAX_NOTES,
   MAX_PER_CALL,
+  nextAsk,
   noteRows,
   scrollNotes,
   toNote,
@@ -605,6 +610,35 @@ describe('learn notes', () => {
     expect(fitNotes([], 0, 10, 54)).toEqual({ shown: [], isTall: false })
   })
 
+  test('a note already shown, by title, is not shown again', async () => {
+    const note = (id: string, title: string) => ({ id, title, text: 'x', kind: 'tech' as const, at: 0 })
+    const { fresh, repeated } = freshNotes([note('a', 'Vite')], [note('b', ' vite '), note('c', 'React'), note('d', 'react')])
+    expect(fresh.map(n => n.id)).toEqual(['c'])
+    expect(repeated).toEqual([' vite ', 'react'])
+    expect(learnAnswer([], [])).toBe('ok')
+    expect(learnAnswer(['note 2: x.'], ['Vite', 'React'])).toBe('ok; skipped note 2: x.; already shown: Vite, React')
+  })
+
+  test('each typed request is numbered and headed by its first line', async () => {
+    expect(nextAsk(null, 'add a login\nwith JWT')).toEqual({ n: 1, text: 'add a login' })
+    expect(nextAsk({ n: 4, text: 'x' }, 'y'.repeat(200))).toMatchObject({ n: 5, text: `${'y'.repeat(79)}…` })
+    expect(askLine({ n: 1, text: 'add a login' }, 30)).toBe(`── add a login ${'─'.repeat(15)}`)
+    expect(askLine({ n: 1, text: 'z'.repeat(100) }, 30)).toHaveLength(30)
+  })
+
+  test("the list heads each request's notes, and counts the heading's row", async () => {
+    const ask = (n: number) => ({ n, text: `ask ${n}` })
+    const note = (id: string, a?: number) => ({ id, title: 't', text: 'short', kind: 'step' as const, at: 0, ...(a === undefined ? {} : { ask: ask(a) }) })
+    const shown = [note('a'), note('b', 1), note('c', 1), note('d', 2)]
+    expect(shown.map((_, i) => askHeading(shown, i)?.n ?? null)).toEqual([null, 1, null, 2])
+    // The first note shown always carries its request's heading.
+    expect(askHeading([note('c', 1)], 0)?.n).toBe(1)
+    // Four-row cards: 9 rows fit two of one request under its heading...
+    expect(fitNotes([note('a', 1), note('b', 1), note('c', 1)], 0, 9, 54).shown.map(n => n.id)).toEqual(['b', 'c'])
+    // ...but only one when they are two requests, each with its heading.
+    expect(fitNotes([note('a', 1), note('b', 1), note('c', 2)], 0, 9, 54).shown.map(n => n.id)).toEqual(['c'])
+  })
+
   test('the list gets the rows the rest of the page leaves it', async () => {
     expect(learnRows(26, 2, false)).toBe(9)
     expect(learnRows(26, 2, true)).toBe(8)
@@ -765,6 +799,47 @@ describe('learn tab', () => {
     expect(await menu.find({ text: /→ por quê: / })).toBeDefined()
 
     expect(await $.tool.call({ tool: LEARN_TOOL, notes: [] } as never)).toMatchObject({ deny: 'explain needs at least one note.' })
+  })
+
+  test('a note already shown this session is left out and said so', async ($, on) => {
+    engineKeeps(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'learn-on' })
+    await $.tool.call({ tool: LEARN_TOOL, notes: [{ title: 'Vite', text: 'A dev server.' }] } as never)
+    const again = await $.tool.call({ tool: LEARN_TOOL, notes: [{ title: 'vite', text: 'Again.' }, { title: 'Bun', text: 'Runs tests.' }] } as never)
+    expect(again).toMatchObject({ result: 'ok; already shown: vite' })
+    expect((await menu.findAll({ type: 'Markdown' })).map(m => m.props.text)).toEqual(['A dev server.', 'Runs tests.'])
+  })
+
+  test("the notes sit under the request they were posted in", async ($, on) => {
+    engineKeeps(on)
+    on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
+    // A 40-row pane, so both requests' notes fit.
+    const tall = { ...pane, props: { ...pane.props, scroll: { offset: 0, bodyRows: 40 } } }
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...tall })
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'learn-on' })
+
+    await $.prompt.submit({ text: 'add a login page', origin: { kind: 'composer' } } as never)
+    await $.tool.call({ tool: LEARN_TOOL, notes: [{ title: 'JWT', text: 'A signed token.' }, { title: 'bcrypt', text: 'Hashes passwords.' }] } as never)
+    await $.prompt.submit({ text: 'now the tests', origin: { kind: 'composer' } } as never)
+    await $.tool.call({ tool: LEARN_TOOL, notes: [{ title: 'Bun test', text: 'Runs the tests.' }] } as never)
+
+    expect(await menu.findAll({ type: 'Text', text: /── add a login page ─/ })).toHaveLength(1)
+    expect(await menu.findAll({ type: 'Text', text: /── now the tests ─/ })).toHaveLength(1)
+    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(3)
+  })
+
+  test("a subagent's explain call is refused and shows nothing", async ($, on) => {
+    engineKeeps(on)
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    const answered = await $.tool.call({ tool: LEARN_TOOL, agentId: 'a1', notes: [{ title: 'Vite', text: 'x' }] } as never)
+    expect(answered).toMatchObject({ deny: expect.stringMatching(/main conversation only/) })
   })
 
   test('with learn mode off a call is kept but the menu stays closed', async ($, on) => {

@@ -19,9 +19,13 @@ export type ZenTask = {
 // idea or pattern, or the step being done.
 export type LearnKind = 'tech' | 'concept' | 'step'
 
+// A request typed in the session: its number and the start of its text,
+// which heads its notes in the Learn tab.
+export type LearnAsk = { n: number; text: string }
+
 // One explanation Claude posted with the explain tool; `why`, when given, says
-// why it was picked.
-export type LearnNote = { id: string; title: string; text: string; why?: string; kind: LearnKind; at: number }
+// why it was picked, and `ask` the request it was posted in.
+export type LearnNote = { id: string; title: string; text: string; why?: string; kind: LearnKind; at: number; ask?: LearnAsk }
 
 // colors: the theme's eight normal ANSI colors, drawn as its swatch.
 export type ThemeEntry = { slug: string; name: string; colors: string[] }
@@ -74,6 +78,7 @@ declare module 'claude-code' {
       learnOn: boolean
       notes: LearnNote[]
       notesScroll: number
+      learnAsk: LearnAsk | null
     }
   }
 }

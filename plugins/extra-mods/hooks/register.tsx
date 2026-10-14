@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PaneOpenArgs, Register, RenderChildren, RenderInput, Timer } from 'claude-code'
 
-import type { Effort, Lang, LearnNote, Panel, RateLimit, StatusSnapshot, ThemeEntry, ZenColors, ZenStep, ZenTask, ZenTheme } from '../types'
+import type { Effort, Lang, LearnAsk, LearnNote, Panel, RateLimit, StatusSnapshot, ThemeEntry, ZenColors, ZenStep, ZenTask, ZenTheme } from '../types'
 import { EFFORT_HEAT, EFFORTS, type Mode, MODELS, MODES, modeLabel, modelFamily } from './lib/modes'
 import { isLang, LANGS, modeName, phrase, type Phrase } from './lib/i18n'
 import {
@@ -49,14 +49,19 @@ import {
 } from './lib/zen'
 import {
   addNote,
+  askHeading,
+  askLine,
   fitNotes,
+  freshNotes,
   KIND_COLORS,
+  learnAnswer,
   learnColumns,
   learnPrompt,
   learnRows,
   LEARN_TOOL_DESCRIPTION,
   LEARN_TOOL_NAME,
   LEARN_TOOL_SCHEMA,
+  nextAsk,
   scrollNotes,
   toNotes,
 } from './lib/learn'
@@ -93,6 +98,8 @@ const lang = atom({ plugin: 'extra-mods', key: 'lang' } as const, 'en')
 const statusClock = atom({ plugin: 'extra-mods', key: 'statusClock' } as const, 0)
 const learnOn = atom({ plugin: 'extra-mods', key: 'learnOn' } as const, false)
 const notes = atom({ plugin: 'extra-mods', key: 'notes' } as const, [] as LearnNote[])
+// The request typed last, which heads the notes Claude posts while on it.
+const learnAsk = atom({ plugin: 'extra-mods', key: 'learnAsk' } as const, null as LearnAsk | null)
 const notesScroll = atom({ plugin: 'extra-mods', key: 'notesScroll' } as const, 0)
 
 // The menu's pane: a sidebar in the fullscreen layout, a block above the prompt otherwise.
@@ -1109,11 +1116,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
     )
   }
 
-  // Learn: the switch, then the session's explanations, newest at the bottom.
-  // The list draws only the newest notes that fit the rows the page leaves it,
-  // so the tabs, the switch and the language row keep their size; a note too
-  // tall for it shows its label and title and is cut at its end. The wheel
-  // walks back through older notes.
+  // Learn: the switch, then the session's explanations, newest at the bottom,
+  // under a heading for each request they were posted in. The list draws only
+  // the newest notes that fit the rows the page leaves it, so the tabs, the
+  // switch and the language row keep their size; a note too tall for it shows
+  // its label and title and is cut at its end. The wheel walks back through
+  // older notes.
   if (tab === 'learn') {
     const isLearnOn = await read($, learnOn)
     const list = await read($, notes)
@@ -1145,27 +1153,38 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
             {t(isLearnOn ? 'learnEmptyOn' : 'learnEmptyOff')}
           </Text>
         ) : (
-          shown.map(note => (
-            <Box
-              key={`note-${note.id}`}
-              flexDirection="column"
-              flexShrink={0}
-              borderStyle="round"
-              borderColor={KIND_COLORS[note.kind]}
-              paddingX={1}
-            >
-              <Text>
-                <Text color={KIND_COLORS[note.kind]}>● {t(`k_${note.kind}`)}</Text> <Text bold>{note.title}</Text>
-              </Text>
-              <Markdown text={note.text} />
-              {note.why !== undefined && (
+          shown.flatMap((note, i) => {
+            const ask = askHeading(shown, i)
+            const card = (
+              <Box
+                key={`note-${note.id}`}
+                flexDirection="column"
+                flexShrink={0}
+                borderStyle="round"
+                borderColor={KIND_COLORS[note.kind]}
+                paddingX={1}
+              >
                 <Text>
-                  <Text color={KIND_COLORS[note.kind]}>→ {t('learnWhy')}: </Text>
-                  <Text dimColor>{note.why}</Text>
+                  <Text color={KIND_COLORS[note.kind]}>● {t(`k_${note.kind}`)}</Text> <Text bold>{note.title}</Text>
                 </Text>
-              )}
-            </Box>
-          ))
+                <Markdown text={note.text} />
+                {note.why !== undefined && (
+                  <Text>
+                    <Text color={KIND_COLORS[note.kind]}>→ {t('learnWhy')}: </Text>
+                    <Text dimColor>{note.why}</Text>
+                  </Text>
+                )}
+              </Box>
+            )
+            if (ask === null) return [card]
+            // The request the notes below it were posted in, one row.
+            const head = (
+              <Box key={`ask-${note.id}`} height={1} flexShrink={0} overflow="hidden">
+                <Text dimColor>{askLine(ask, width)}</Text>
+              </Box>
+            )
+            return [head, card]
+          })
         )}
       </Box>,
     )
@@ -1485,6 +1504,7 @@ export const register: Register = on => {
       // A new conversation starts with no explanations; learn mode itself is kept.
       await update($, notes, () => [])
       await update($, notesScroll, () => 0)
+      await update($, learnAsk, () => null)
       learnToastShown = false
       await restore($)
     }
@@ -1609,6 +1629,7 @@ export const register: Register = on => {
     const isTyped = e.origin.kind === 'composer' && text !== '' && !text.startsWith('/')
     if (!isTyped) return next(e)
     lastPrompt = (text.split('\n')[0] ?? '').slice(0, 200)
+    await update($, learnAsk, a => nextAsk(a, text))
     if (!(await read($, zenOn))) return next(e)
     await startTask($, lastPrompt)
     return next({ ...e, context: [...(e.context ?? []), ZEN_PROMPT] })
@@ -1695,16 +1716,30 @@ export const register: Register = on => {
     isDeferred: !(await read($, learnOn)),
   })).catch(($, e, next) => next(e))
 
-  // Learn: Claude's explanations, kept as the tab's notes. A call with no
-  // whole note is refused; one with some kept says only what it skipped, so
-  // the answer costs Claude next to nothing to read.
+  // Learn: Claude's explanations, kept as the tab's notes under the request
+  // they were posted in. The panel is the main conversation's: a subagent's
+  // call is refused. A call with no whole note is refused too; otherwise the
+  // answer says only what it skipped and what was already shown (by title),
+  // so it costs Claude next to nothing to read and teaches it not to repeat.
   on('tool.call', { tool: LEARN_TOOL }, async ($, e) => {
+    if (e.agentId !== undefined) return { deny: 'explain is for the main conversation only; do not call it from a subagent.' }
     const made = toNotes(e, e.tool_use_id, Date.now())
     if (made.notes.length === 0) return { deny: made.errors.join(' ') }
-    await update($, notes, l => made.notes.reduce(addNote, l))
-    await update($, notesScroll, () => 0)
-    if (await read($, learnOn)) await showLearn($)
-    return { result: made.errors.length === 0 ? 'ok' : `ok; skipped ${made.errors.join(' ')}` }
+    const ask = await read($, learnAsk)
+    const asked = ask === null ? made.notes : made.notes.map(n => ({ ...n, ask }))
+    let repeated: string[] = []
+    let added = 0
+    await update($, notes, l => {
+      const { fresh, repeated: seen } = freshNotes(l, asked)
+      repeated = seen
+      added = fresh.length
+      return fresh.reduce(addNote, l)
+    })
+    if (added > 0) {
+      await update($, notesScroll, () => 0)
+      if (await read($, learnOn)) await showLearn($)
+    }
+    return { result: learnAnswer(made.errors, repeated) }
   })
 
   // Mode: the chosen effort rides on every model request of the session; the

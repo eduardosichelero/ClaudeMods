@@ -1,6 +1,6 @@
 // The Learn tab's words to Claude and its notes' arithmetic. Pure; the hooks are in register.tsx.
 
-import type { Lang, LearnKind, LearnNote } from '../../types'
+import type { Lang, LearnAsk, LearnKind, LearnNote } from '../../types'
 
 export const LEARN_TOOL_NAME = 'explain'
 
@@ -14,6 +14,8 @@ export const MAX_PER_CALL = 5
 export const MAX_TITLE = 40
 export const MAX_TEXT = 300
 export const MAX_WHY = 200
+// The most of a request's text kept to head its notes.
+export const MAX_ASK = 80
 
 // Each kind's label color in the tab: cyan, magenta, green.
 export const KIND_COLORS: Record<LearnKind, string> = { tech: '#06b6d4', concept: '#d946ef', step: '#22c55e' }
@@ -24,8 +26,8 @@ export const LEARN_TOOL_DESCRIPTION =
   'Shows short notes in the Learn panel the user reads while you work. Send it in the same response as the ' +
   'tool call it explains, never on its own, with every note for that step in one call. Only for a technology, ' +
   'library, pattern or notable command the first time it comes up, or the start of a big step; at most 3 notes ' +
-  'per request; never for trivial actions like reading files. Each note: a title, one sentence on what it is and ' +
-  'does here and, when it helps, one on why it was picked.'
+  'per request; never for trivial actions like reading files, nor from a subagent. Each note: a title, one ' +
+  'sentence on what it is and does here and, when it helps, one on why it was picked.'
 
 export const LEARN_TOOL_SCHEMA = {
   type: 'object',
@@ -105,6 +107,45 @@ export function toNotes(input: unknown, id: string, at: number): NotesResult {
   )
 }
 
+// The key titles are compared on: case and runs of spaces aside.
+const titleKey = (title: string) => title.trim().toLowerCase().replace(/\s+/g, ' ')
+
+export type FreshResult = { fresh: LearnNote[]; repeated: string[] }
+
+// Of `made`, the notes whose title the session has not shown yet (`list`, or
+// one before it in `made`), and the titles of the rest.
+export function freshNotes(list: readonly LearnNote[], made: readonly LearnNote[]): FreshResult {
+  const seen = new Set(list.map(n => titleKey(n.title)))
+  return made.reduce<FreshResult>(
+    (acc, note) => {
+      const key = titleKey(note.title)
+      if (seen.has(key)) acc.repeated.push(note.title)
+      else {
+        seen.add(key)
+        acc.fresh.push(note)
+      }
+      return acc
+    },
+    { fresh: [], repeated: [] },
+  )
+}
+
+// What the explain tool answers: "ok", then what it skipped and what it had
+// already shown, so Claude reads next to nothing and learns not to repeat.
+export const learnAnswer = (errors: readonly string[], repeated: readonly string[]) =>
+  [
+    'ok',
+    ...(errors.length === 0 ? [] : [`skipped ${errors.join(' ')}`]),
+    ...(repeated.length === 0 ? [] : [`already shown: ${repeated.join(', ')}`]),
+  ].join('; ')
+
+// The request a typed prompt starts: the one after `last`, headed by the
+// prompt's first line.
+export const nextAsk = (last: LearnAsk | null, prompt: string): LearnAsk => ({
+  n: (last?.n ?? 0) + 1,
+  text: cut((prompt.split('\n')[0] ?? '').trim(), MAX_ASK),
+})
+
 // The list with `note` added last, keeping the newest MAX_NOTES.
 export const addNote = (list: readonly LearnNote[], note: LearnNote): LearnNote[] => [...list, note].slice(-MAX_NOTES)
 
@@ -128,6 +169,24 @@ export const noteRows = (note: LearnNote, width: number) => {
   return 2 + head + body + why
 }
 
+// The request whose heading the list draws above `shown[i]`: the first note
+// shown, and each note of a request other than the one before it. Notes from
+// before any request typed get none.
+export const askHeading = (shown: readonly LearnNote[], i: number): LearnAsk | null => {
+  const ask = shown[i]?.ask
+  return ask !== undefined && (i === 0 || shown[i - 1]?.ask?.n !== ask.n) ? ask : null
+}
+
+// A request's heading, one row `width` cells wide: "── its text ─────".
+export const askLine = (ask: LearnAsk, width: number) => {
+  const label = `── ${cut(ask.text, Math.max(1, width - 6))} `
+  return label + '─'.repeat(Math.max(0, width - label.length))
+}
+
+// Rows the notes `shown` take as the list draws them, headings included.
+const shownRows = (shown: readonly LearnNote[], width: number) =>
+  shown.reduce((n, note, i) => n + noteRows(note, width) + (askHeading(shown, i) === null ? 0 : 1), 0)
+
 // The rows the Learn page leaves its list: the body less the tab strip (3),
 // the heading (2), the framed switch (3), the note under it, the "newer" line
 // while there is one, the language footer (6) and one spare row.
@@ -135,18 +194,14 @@ export const learnRows = (bodyRows: number, noteLines: number, hasNewer: boolean
   Math.max(3, bodyRows - (3 + 2 + 3 + noteLines + (hasNewer ? 1 : 0) + 6 + 1))
 
 // The notes the list draws, oldest first: with `scroll` of the newest hidden
-// below, the newest that fit in `rows`. `isTall` when even the newest shown
+// below, the newest that fit in `rows` with their requests' headings. `isTall` when even the newest shown
 // does not fit, so the list shows its top (label and title) and cuts its end.
 export function fitNotes(notes: readonly LearnNote[], scroll: number, rows: number, width: number) {
   const end = Math.min(notes.length, Math.max(1, notes.length - scroll))
   if (end === 0) return { shown: [] as LearnNote[], isTall: false }
   let start = end - 1
-  let used = noteRows(notes[start]!, width)
-  const isTall = used > rows
-  while (start > 0 && used + noteRows(notes[start - 1]!, width) <= rows) {
-    start--
-    used += noteRows(notes[start]!, width)
-  }
+  const isTall = shownRows(notes.slice(start, end), width) > rows
+  while (start > 0 && shownRows(notes.slice(start - 1, end), width) <= rows) start--
   return { shown: notes.slice(start, end), isTall }
 }
 

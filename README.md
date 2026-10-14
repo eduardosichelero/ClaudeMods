@@ -38,7 +38,7 @@ Shows model, folder, branch, context, 5h/7d limits and cache state on one row.
 
 ### Learn
 
-Claude explains, while it works, the technologies and steps it picks: what each one is, what it does here and why it was chosen. Each explanation is a card in its kind's color, with the why on a line of its own. Turn it on in the Learn tab; the pane then opens beside the work at 40% of the terminal, and Esc gives the keys back without closing it. `/tools learn` opens it.
+Claude explains, while it works, the technologies and steps it picks: what each one is, what it does here and why it was chosen. Each explanation is a card in its kind's color, with the why on a line of its own, under the start of the request it was posted in. Turn it on in the Learn tab; the pane then opens beside the work at 40% of the terminal, and Esc gives the keys back without closing it. `/tools learn` opens it.
 
 The sidebar speaks English and Português. Keys: **Tab** moves, **Enter** selects, **Esc** closes.
 
@@ -64,7 +64,7 @@ To update: `claude plugin marketplace update jdsjh-mods && claude plugin update 
 - **Theme:** themes download once to `~/.claude/extra-mods/themes/`. The pick is written as `~/.claude/themes/extra-mods.json` and set in `~/.claude/settings.json`. Restart Claude Code once the first time; after that themes change live. The terminal background follows too, on Windows Terminal (for the session, then restored) and on terminals that take OSC colors (Ghostty, iTerm2, kitty, WezTerm, Terminal.app).
 - **Mode:** the model switch runs Claude Code's own `/model`. The effort level applies to every request and is remembered. A running session's permission mode changes with **shift+tab**; the pick here is saved as `permissions.defaultMode`.
 - **Status:** on by default. It takes your own `statusLine` out of `settings.json` and puts it back when you turn it off. Background shells and monitors show on a second row; click it for `/tasks`.
-- **Learn:** on, a short section joins Claude's system prompt and its `explain` tool joins the tool list; off, both are gone. To keep the cost low, Claude sends a step's explanations in one call, alongside the work it explains, a sentence or two each, and only the first time something comes up. Explanations last for the session (a `/clear` starts them over), up to 100. The explanations come in the panel's language.
+- **Learn:** on, a short section joins Claude's system prompt and its `explain` tool joins the tool list; off, both are gone. To keep the cost low, Claude sends a step's explanations in one call, alongside the work it explains, a sentence or two each, and only the first time something comes up: one whose title was already shown is left out, and Claude is told so. Subagents cannot post to the panel. Explanations last for the session (a `/clear` starts them over), up to 100. The explanations come in the panel's language.
 - Every settings file is backed up first, as `*.extra-mods.bak`.
 
 </details>
