@@ -254,6 +254,14 @@ const wideHint = { ...hint, viewport: { columns: 200, rows: 50, isFullscreen: tr
 
 const LEARN_TOOL = 'mcp__extra-mods__explain'
 
+// The menu's pane drawn on the terminal and on the desktop at once, over the
+// same state: the test acts on the first and reads both. `bodyRows` tall.
+const mountMenus = async ($: Parameters<Parameters<typeof test>[1]>[0], bodyRows = 26) => {
+  const props = { ...pane.props, scroll: { offset: 0, bodyRows } }
+  const [terminal, desktop] = await Promise.all(SURFACES.map(surface => $.ui.mount({ plugin: PLUGIN, surface, ...pane, props })))
+  return [terminal!, desktop!] as const
+}
+
 // What a system prompt is composed for, as the engine hands it to prompt.compose.
 const COMPOSE = {
   model: 'claude-opus-5-5',
@@ -749,7 +757,8 @@ describe('learn tab', () => {
   test("Claude's explain calls fill the Learn tab and open it beside the work", async ($, on) => {
     const { opened } = engineKeeps(on)
     const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
-    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    const menus = await mountMenus($)
+    const [menu] = menus
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
     await menu.press({ key: 'learn-on' })
@@ -759,29 +768,34 @@ describe('learn tab', () => {
     expect(answered).toMatchObject({ result: 'ok' })
     expect(opened.at(-1)).toMatchObject({ id: 'claude-tools', columns: 80 })
     expect(opened.at(-1)?.focus).toBeUndefined()
-    expect(await menu.find({ text: /● tech/ })).toBeDefined()
-    // Each note is a card framed in its kind's color.
-    const cards = (await menu.findAll({ type: 'Box' })).filter(b => b.props.borderColor === '#06b6d4')
-    expect(cards).toHaveLength(1)
-    expect(cards[0]?.props.borderStyle).toBe('round')
-    expect(await menu.find({ text: /Vite/ })).toBeDefined()
-    expect((await menu.find({ type: 'Markdown' }))?.props.text).toMatch(/reloads/)
+    for (const m of menus) {
+      expect(await m.find({ text: /● tech/ })).toBeDefined()
+      // Each note is a card framed in its kind's color.
+      const cards = (await m.findAll({ type: 'Box' })).filter(b => b.props.borderColor === '#06b6d4')
+      expect(cards).toHaveLength(1)
+      expect(cards[0]?.props.borderStyle).toBe('round')
+      expect(await m.find({ text: /Vite/ })).toBeDefined()
+      expect((await m.find({ type: 'Markdown' }))?.props.text).toMatch(/reloads/)
+    }
 
     // A call missing its title is refused and keeps nothing.
     const refused = await $.tool.call({ tool: LEARN_TOOL, text: 'no title' } as never)
     expect(refused).toMatchObject({ deny: 'explain needs a non-empty title.' })
-    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(1)
+    for (const m of menus) expect(await m.findAll({ type: 'Markdown' })).toHaveLength(1)
 
     // The labels follow the panel's language; the note keeps Claude's words.
     await menu.press({ key: 'lang-pt' })
-    expect(await menu.find({ text: /● tecnologia/ })).toBeDefined()
-    expect((await menu.find({ type: 'Markdown' }))?.props.text).toMatch(/reloads/)
+    for (const m of menus) {
+      expect(await m.find({ text: /● tecnologia/ })).toBeDefined()
+      expect((await m.find({ type: 'Markdown' }))?.props.text).toMatch(/reloads/)
+    }
   })
 
   test('one explain call posts several notes, each why on its own line', async ($, on) => {
     engineKeeps(on)
     const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
-    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    const menus = await mountMenus($)
+    const [menu] = menus
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
     await menu.press({ key: 'learn-on' })
@@ -792,11 +806,13 @@ describe('learn tab', () => {
       { text: 'no title' },
     ]
     expect(await $.tool.call({ tool: LEARN_TOOL, notes } as never)).toMatchObject({ result: 'ok; skipped note 3: explain needs a non-empty title.' })
-    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(2)
-    expect(await menu.find({ text: /→ why: / })).toBeDefined()
-    expect(await menu.find({ text: /It reloads fast/ })).toBeDefined()
+    for (const m of menus) {
+      expect(await m.findAll({ type: 'Markdown' })).toHaveLength(2)
+      expect(await m.find({ text: /→ why: / })).toBeDefined()
+      expect(await m.find({ text: /It reloads fast/ })).toBeDefined()
+    }
     await menu.press({ key: 'lang-pt' })
-    expect(await menu.find({ text: /→ por quê: / })).toBeDefined()
+    for (const m of menus) expect(await m.find({ text: /→ por quê: / })).toBeDefined()
 
     expect(await $.tool.call({ tool: LEARN_TOOL, notes: [] } as never)).toMatchObject({ deny: 'explain needs at least one note.' })
   })
@@ -804,23 +820,24 @@ describe('learn tab', () => {
   test('a note already shown this session is left out and said so', async ($, on) => {
     engineKeeps(on)
     const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
-    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    const menus = await mountMenus($)
+    const [menu] = menus
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
     await menu.press({ key: 'learn-on' })
     await $.tool.call({ tool: LEARN_TOOL, notes: [{ title: 'Vite', text: 'A dev server.' }] } as never)
     const again = await $.tool.call({ tool: LEARN_TOOL, notes: [{ title: 'vite', text: 'Again.' }, { title: 'Bun', text: 'Runs tests.' }] } as never)
     expect(again).toMatchObject({ result: 'ok; already shown: vite' })
-    expect((await menu.findAll({ type: 'Markdown' })).map(m => m.props.text)).toEqual(['A dev server.', 'Runs tests.'])
+    for (const m of menus) expect((await m.findAll({ type: 'Markdown' })).map(n => n.props.text)).toEqual(['A dev server.', 'Runs tests.'])
   })
 
   test("the notes sit under the request they were posted in", async ($, on) => {
     engineKeeps(on)
     on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
     // A 40-row pane, so both requests' notes fit.
-    const tall = { ...pane, props: { ...pane.props, scroll: { offset: 0, bodyRows: 40 } } }
+    const menus = await mountMenus($, 40)
+    const [menu] = menus
     const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
-    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...tall })
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
     await menu.press({ key: 'learn-on' })
@@ -830,9 +847,11 @@ describe('learn tab', () => {
     await $.prompt.submit({ text: 'now the tests', origin: { kind: 'composer' } } as never)
     await $.tool.call({ tool: LEARN_TOOL, notes: [{ title: 'Bun test', text: 'Runs the tests.' }] } as never)
 
-    expect(await menu.findAll({ type: 'Text', text: /── add a login page ─/ })).toHaveLength(1)
-    expect(await menu.findAll({ type: 'Text', text: /── now the tests ─/ })).toHaveLength(1)
-    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(3)
+    for (const m of menus) {
+      expect(await m.findAll({ type: 'Text', text: /── add a login page ─/ })).toHaveLength(1)
+      expect(await m.findAll({ type: 'Text', text: /── now the tests ─/ })).toHaveLength(1)
+      expect(await m.findAll({ type: 'Markdown' })).toHaveLength(3)
+    }
   })
 
   test("a subagent's explain call is refused and shows nothing", async ($, on) => {
@@ -886,22 +905,27 @@ describe('learn tab', () => {
   test('many notes keep the tabs and the switch whole; a note too tall shows its title', async ($, on) => {
     engineKeeps(on)
     const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...hint })
-    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    const menus = await mountMenus($)
+    const [menu] = menus
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
     await menu.press({ key: 'learn-on' })
     for (let i = 0; i < 30; i++) await $.tool.call({ tool: LEARN_TOOL, title: `Note ${i}`, text: 'Short.' } as never)
-    // A 26-row pane leaves the list 9 rows: the two newest four-row cards.
-    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(2)
-    expect(await menu.find({ text: /Note 29/ })).toBeDefined()
-    expect(await menu.find({ text: /Note 27/ })).toBeUndefined()
-    for (const key of ['tabs', 'h-Learn mode', 'learn-onoff']) expect((await menu.find({ key }))?.props.flexShrink).toBe(0)
-    expect((await menu.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-end')
+    for (const m of menus) {
+      // A 26-row pane leaves the list 9 rows: the two newest four-row cards.
+      expect(await m.findAll({ type: 'Markdown' })).toHaveLength(2)
+      expect(await m.find({ text: /Note 29/ })).toBeDefined()
+      expect(await m.find({ text: /Note 27/ })).toBeUndefined()
+      for (const key of ['tabs', 'h-Learn mode', 'learn-onoff']) expect((await m.find({ key }))?.props.flexShrink).toBe(0)
+      expect((await m.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-end')
+    }
 
     await $.tool.call({ tool: LEARN_TOOL, title: 'A long one', text: 'line\n'.repeat(10) } as never)
-    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(1)
-    expect(await menu.find({ text: /A long one/ })).toBeDefined()
-    expect((await menu.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-start')
+    for (const m of menus) {
+      expect(await m.findAll({ type: 'Markdown' })).toHaveLength(1)
+      expect(await m.find({ text: /A long one/ })).toBeDefined()
+      expect((await m.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-start')
+    }
   })
 
   test('a /clear empties the Learn tab and keeps learn mode', async ($, on) => {
@@ -911,19 +935,22 @@ describe('learn tab', () => {
     on('session.model', () => ({ value: 'claude-opus-5-5' }))
     on('classic.SessionStart', () => ({}))
     const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...hint })
-    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    const menus = await mountMenus($)
+    const [menu] = menus
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
     await menu.press({ key: 'learn-on' })
     await $.tool.call({ tool: LEARN_TOOL, title: 'Vite', text: 'A dev server.' } as never)
-    expect(await menu.find({ type: 'Markdown' })).toBeDefined()
+    for (const m of menus) expect(await m.find({ type: 'Markdown' })).toBeDefined()
 
     await $.classic.SessionStart({ source: 'clear' })
     expect(kept.get('learnOn')).toBe(true)
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
-    expect(await isChosen(menu, 'learn-on')).toBe(true)
-    expect(await menu.find({ type: 'Markdown' })).toBeUndefined()
-    expect(await menu.find({ text: /No explanations yet/ })).toBeDefined()
+    for (const m of menus) {
+      expect(await isChosen(m, 'learn-on')).toBe(true)
+      expect(await m.find({ type: 'Markdown' })).toBeUndefined()
+      expect(await m.find({ text: /No explanations yet/ })).toBeDefined()
+    }
   })
 })
