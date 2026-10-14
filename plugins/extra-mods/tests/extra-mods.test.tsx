@@ -584,6 +584,21 @@ describe('learn tab', () => {
     expect(opened.at(-1)).toMatchObject({ columns: 56, closeOnEscape: true })
   })
 
+  test("the Learn tab does not promise that Esc closes it", async ($, on) => {
+    engineKeeps(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...hint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    expect((await menu.find({ key: 'tools-close' }))?.text).toMatch(/esc/)
+    expect(await menu.find({ text: /esc close/ })).toBeDefined()
+    await menu.press({ key: 'tab-learn' })
+    expect((await menu.find({ key: 'tools-close' }))?.text).not.toMatch(/esc/)
+    expect(await menu.find({ text: /esc close/ })).toBeUndefined()
+    expect(await menu.find({ text: /esc back to the prompt/ })).toBeDefined()
+    await menu.press({ key: 'lang-pt' })
+    expect(await menu.find({ text: /esc volta ao prompt/ })).toBeDefined()
+  })
+
   test('/tools learn opens the menu on the Learn tab', async ($, on) => {
     const { opened } = engineKeeps(on)
     const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })

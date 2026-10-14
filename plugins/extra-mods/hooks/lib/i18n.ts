@@ -56,6 +56,8 @@ const EN = {
   k_concept: 'concept',
   k_step: 'step',
   learnToast: 'New explanation in Learn: open it with /tools learn',
+  closeLearn: '✕',
+  keysLearn: 'tab move · enter select · wheel scrolls · esc back to the prompt',
 }
 
 export type Phrase = keyof typeof EN
@@ -109,6 +111,8 @@ const PT: Record<Phrase, string> = {
   k_concept: 'conceito',
   k_step: 'passo',
   learnToast: 'Nova explicação em Aprender: abra com /tools learn',
+  closeLearn: '✕',
+  keysLearn: 'tab mover · enter escolher · roda rola · esc volta ao prompt',
 }
 
 const PHRASES: Record<Lang, Record<Phrase, string>> = { en: EN, pt: PT }

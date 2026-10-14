@@ -1191,7 +1191,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
           </Box>
         ))}
         <Box flexGrow={1} />
-        <Button key="tools-close" plain dimColor label={t('close')} onPress={() => toggleMenu($)} />
+        <Button key="tools-close" plain dimColor label={t(tab === 'learn' ? 'closeLearn' : 'close')} onPress={() => toggleMenu($)} />
       </Box>
       <Text dimColor>
         {cells.map(c => (c.isOn ? `╯${' '.repeat(c.inner.length)}╰` : '─'.repeat(c.cells))).join('')}
@@ -1207,7 +1207,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
         <Text dimColor>{t('language')}</Text>
         {LANGS.map(l => chip(`lang-${l.lang}`, l.label, l.lang === lng, () => setLang($, l.lang)))}
       </Box>
-      <Text dimColor>{t('keys')}</Text>
+      {/* Esc on the Learn tab hands the keys back and leaves the pane open. */}
+      <Text dimColor>{t(tab === 'learn' ? 'keysLearn' : 'keys')}</Text>
     </Box>
   )
 
