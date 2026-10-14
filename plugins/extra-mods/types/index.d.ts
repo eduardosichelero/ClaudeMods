@@ -15,6 +15,13 @@ export type ZenTask = {
   steps: ZenStep[]
 }
 
+// What an explanation in the Learn tab is about: a technology or library, an
+// idea or pattern, or the step being done.
+export type LearnKind = 'tech' | 'concept' | 'step'
+
+// One explanation Claude posted with the explain tool.
+export type LearnNote = { id: string; title: string; text: string; kind: LearnKind; at: number }
+
 // colors: the theme's eight normal ANSI colors, drawn as its swatch.
 export type ThemeEntry = { slug: string; name: string; colors: string[] }
 

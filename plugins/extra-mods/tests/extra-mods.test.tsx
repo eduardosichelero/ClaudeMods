@@ -15,6 +15,7 @@ import {
 } from '../hooks/lib/palette'
 import { barCells, percentOf, stepLabel, visibleSteps } from '../hooks/lib/zen'
 import { backgroundPill, barFill, cacheState, CACHE_TTL_MS, colorFor, fmtDuration, fmtTokens } from '../hooks/lib/status'
+import { addNote, learnColumns, learnPrompt, MAX_NOTES, scrollNotes, toNote, visibleNotes } from '../hooks/lib/learn'
 
 const PLUGIN = 'extra-mods'
 const SURFACES = ['terminal', 'desktop'] as const
@@ -431,5 +432,64 @@ describe('toolbox', () => {
     expect(await progress.find({ text: /50%/ })).toBeDefined()
     expect(await progress.find({ text: /Step 2 of 4/ })).toBeDefined()
     expect(await progress.find({ text: /Fetch data/ })).toBeDefined()
+  })
+})
+
+describe('learn notes', () => {
+  test('reads the explain input into a note', async () => {
+    expect(toNote({ title: ' Vite ', text: 'A fast dev server.', kind: 'tech' }, 'n1', 5)).toEqual({
+      note: { id: 'n1', title: 'Vite', text: 'A fast dev server.', kind: 'tech', at: 5 },
+    })
+    expect(toNote({ title: 'MVC', text: 'Splits the app.' }, 'n2', 0)).toMatchObject({ note: { kind: 'concept' } })
+    expect(toNote({ title: 'MVC', text: 'x', kind: 'weird' }, 'n3', 0)).toMatchObject({ note: { kind: 'concept' } })
+  })
+
+  test('cuts long titles and texts with an ellipsis', async () => {
+    const made = toNote({ title: 'T'.repeat(200), text: 'x'.repeat(1000) }, 'n', 0)
+    if (!('note' in made)) throw new Error('expected a note')
+    expect(made.note.title).toHaveLength(80)
+    expect(made.note.title.endsWith('…')).toBe(true)
+    expect(made.note.text).toHaveLength(600)
+    expect(made.note.text.endsWith('…')).toBe(true)
+  })
+
+  test('refuses a missing or empty title or text', async () => {
+    expect(toNote({ text: 'x' }, 'n', 0)).toEqual({ error: 'explain needs a non-empty title.' })
+    expect(toNote({ title: '  ', text: '' }, 'n', 0)).toEqual({ error: 'explain needs a non-empty title and text.' })
+    expect(toNote(undefined, 'n', 0)).toEqual({ error: 'explain needs a non-empty title and text.' })
+  })
+
+  test('keeps the newest notes, in order', async () => {
+    let list: ReturnType<typeof addNote> = []
+    for (let i = 0; i < MAX_NOTES + 5; i++) list = addNote(list, { id: `n${i}`, title: 't', text: 'x', kind: 'step', at: i })
+    expect(list).toHaveLength(MAX_NOTES)
+    expect(list[0]?.id).toBe('n5')
+    expect(list.at(-1)?.id).toBe(`n${MAX_NOTES + 4}`)
+  })
+
+  test('asks for 40% of the terminal, never under 56 columns', async () => {
+    expect(learnColumns(200)).toBe(80)
+    expect(learnColumns(100)).toBe(56)
+    expect(learnColumns(0)).toBe(56)
+  })
+
+  test('the wheel walks back through older notes and returns to the newest', async () => {
+    const notes = ['a', 'b', 'c'].map((id, at) => ({ id, title: id, text: id, kind: 'step' as const, at }))
+    expect(visibleNotes(notes, 0).map(n => n.id)).toEqual(['a', 'b', 'c'])
+    expect(visibleNotes(notes, 2).map(n => n.id)).toEqual(['a'])
+    expect(visibleNotes([], 0)).toEqual([])
+    expect(scrollNotes(0, -1, 3)).toBe(1)
+    expect(scrollNotes(2, -3, 3)).toBe(2)
+    expect(scrollNotes(1, 1, 3)).toBe(0)
+    expect(scrollNotes(0, 1, 3)).toBe(0)
+    expect(scrollNotes(0, -1, 0)).toBe(0)
+    expect(scrollNotes(1, 0, 3)).toBe(1)
+  })
+
+  test("the instruction for Claude speaks the panel's language and names the tool", async () => {
+    expect(learnPrompt('pt')).toMatch(/mcp__extra-mods__explain/)
+    expect(learnPrompt('pt')).toMatch(/em português/)
+    expect(learnPrompt('en')).toMatch(/mcp__extra-mods__explain/)
+    expect(learnPrompt('en')).toMatch(/in English/)
   })
 })
