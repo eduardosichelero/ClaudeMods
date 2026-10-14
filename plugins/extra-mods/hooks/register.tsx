@@ -49,15 +49,16 @@ import {
 } from './lib/zen'
 import {
   addNote,
+  fitNotes,
   KIND_COLORS,
   learnColumns,
   learnPrompt,
+  learnRows,
   LEARN_TOOL_DESCRIPTION,
   LEARN_TOOL_NAME,
   LEARN_TOOL_SCHEMA,
   scrollNotes,
   toNote,
-  visibleNotes,
 } from './lib/learn'
 
 // Every value the drawings read. Settings worth keeping across sessions are
@@ -857,8 +858,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
         </Text>
       </Button>,
     )
+  // Rows of chips and headings keep their size when a page's list overflows.
   const chips = (key: string, items: RenderChildren[]) => (
-    <Box key={key} flexWrap="wrap" columnGap={1}>
+    <Box key={key} flexWrap="wrap" columnGap={1} flexShrink={0}>
       {items}
     </Box>
   )
@@ -872,7 +874,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
     </Text>
   )
   const heading = (text: string, extra?: RenderChildren) => (
-    <Box key={`h-${text}`} marginTop={1} gap={1}>
+    <Box key={`h-${text}`} marginTop={1} gap={1} flexShrink={0}>
       <Text dimColor>{text}</Text>
       {extra}
     </Box>
@@ -1102,28 +1104,42 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
   }
 
   // Learn: the switch, then the session's explanations, newest at the bottom.
-  // The list keeps the page's height, cut at its top, so the tabs and the
-  // language row stay put; the wheel walks back through older notes.
+  // The list draws only the newest notes that fit the rows the page leaves it,
+  // so the tabs, the switch and the language row keep their size; a note too
+  // tall for it shows its label and title and is cut at its end. The wheel
+  // walks back through older notes.
   if (tab === 'learn') {
     const isLearnOn = await read($, learnOn)
     const list = await read($, notes)
     const scroll = await read($, notesScroll)
+    const width = Math.max(10, columns - 2)
+    const room = learnRows(e.props.scroll.bodyRows, Math.ceil(t('learnNote').length / width), scroll > 0)
+    const { shown, isTall } = fitNotes(list, scroll, room, width)
     rows.push(
       heading(t('learnMode')),
       chips('learn-onoff', [
         chip('learn-on', t('on'), isLearnOn, () => setLearnOn($, true)),
         chip('learn-off', t('off'), !isLearnOn, () => setLearnOn($, false)),
       ]),
-      <Text key="learn-note" dimColor>
-        {t('learnNote')}
-      </Text>,
-      <Box key="learn-list" flexDirection="column" justifyContent="flex-end" flexGrow={1} flexShrink={1} overflow="hidden">
+      <Box key="learn-note-row" flexShrink={0}>
+        <Text key="learn-note" dimColor>
+          {t('learnNote')}
+        </Text>
+      </Box>,
+      <Box
+        key="learn-list"
+        flexDirection="column"
+        justifyContent={isTall ? 'flex-start' : 'flex-end'}
+        flexGrow={1}
+        flexShrink={1}
+        overflow="hidden"
+      >
         {list.length === 0 ? (
           <Text key="learn-empty" dimColor>
             {t(isLearnOn ? 'learnEmptyOn' : 'learnEmptyOff')}
           </Text>
         ) : (
-          visibleNotes(list, scroll).map(note => (
+          shown.map(note => (
             <Box key={`note-${note.id}`} flexDirection="column" marginTop={1} flexShrink={0}>
               <Text>
                 <Text color={KIND_COLORS[note.kind]}>[{t(`k_${note.kind}`)}]</Text> <Text bold>{note.title}</Text>
@@ -1136,9 +1152,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
     )
     if (scroll > 0) {
       rows.push(
-        <Text key="learn-newer" dimColor>
-          {t('learnNewer', { n: scroll })}
-        </Text>,
+        <Box key="learn-newer-row" flexShrink={0}>
+          <Text key="learn-newer" dimColor>
+            {t('learnNewer', { n: scroll })}
+          </Text>
+        </Box>,
       )
     }
   }
@@ -1153,7 +1171,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
   })
   const used = cells.reduce((n, c) => n + c.cells, 0)
   const tabStrip = (
-    <Box key="tabs" flexDirection="column">
+    <Box key="tabs" flexDirection="column" flexShrink={0}>
       <Text dimColor>{cells.map(c => (c.isOn ? `╭${'─'.repeat(c.inner.length)}╮` : ' '.repeat(c.cells))).join('')}</Text>
       <Box>
         {cells.map(c => (

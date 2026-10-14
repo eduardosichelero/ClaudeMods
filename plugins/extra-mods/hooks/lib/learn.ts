@@ -76,10 +76,39 @@ export const addNote = (list: readonly LearnNote[], note: LearnNote): LearnNote[
 // under the menu's own width.
 export const learnColumns = (terminalColumns: number, floor = 56) => Math.max(floor, Math.round(terminalColumns * 0.4))
 
-// The notes drawn with `scroll` of the newest hidden below: oldest first,
-// ending at the newest shown, so the list is drawn anchored at its bottom.
-export const visibleNotes = (notes: readonly LearnNote[], scroll: number) =>
-  notes.slice(0, Math.max(1, notes.length - scroll))
+// Cells a note's label and the space after it take: the widest, "[tecnologia] ".
+const LABEL_CELLS = 13
+
+// Rows a note takes in a list `width` cells wide: the gap above it, its label
+// and title, and its text as wrapped.
+export const noteRows = (note: LearnNote, width: number) => {
+  const w = Math.max(1, width)
+  const head = Math.max(1, Math.ceil((LABEL_CELLS + note.title.length) / w))
+  const body = note.text.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / w)), 0)
+  return 1 + head + body
+}
+
+// The rows the Learn page leaves its list: the body less the tab strip (3),
+// the heading (2), the framed switch (3), the note under it, the "newer" line
+// while there is one, the language footer (6) and one spare row.
+export const learnRows = (bodyRows: number, noteLines: number, hasNewer: boolean) =>
+  Math.max(3, bodyRows - (3 + 2 + 3 + noteLines + (hasNewer ? 1 : 0) + 6 + 1))
+
+// The notes the list draws, oldest first: with `scroll` of the newest hidden
+// below, the newest that fit in `rows`. `isTall` when even the newest shown
+// does not fit, so the list shows its top (label and title) and cuts its end.
+export function fitNotes(notes: readonly LearnNote[], scroll: number, rows: number, width: number) {
+  const end = Math.min(notes.length, Math.max(1, notes.length - scroll))
+  if (end === 0) return { shown: [] as LearnNote[], isTall: false }
+  let start = end - 1
+  let used = noteRows(notes[start]!, width)
+  const isTall = used > rows
+  while (start > 0 && used + noteRows(notes[start - 1]!, width) <= rows) {
+    start--
+    used += noteRows(notes[start]!, width)
+  }
+  return { shown: notes.slice(start, end), isTall }
+}
 
 // The scroll after a wheel move of `by` rows: up (negative) hides one more of
 // the newest notes, down one fewer; one note always shows.

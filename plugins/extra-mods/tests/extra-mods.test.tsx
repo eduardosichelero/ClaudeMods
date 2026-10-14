@@ -15,7 +15,7 @@ import {
 } from '../hooks/lib/palette'
 import { barCells, percentOf, stepLabel, visibleSteps } from '../hooks/lib/zen'
 import { backgroundPill, barFill, cacheState, CACHE_TTL_MS, colorFor, fmtDuration, fmtTokens } from '../hooks/lib/status'
-import { addNote, learnColumns, learnPrompt, MAX_NOTES, scrollNotes, toNote, visibleNotes } from '../hooks/lib/learn'
+import { addNote, fitNotes, learnColumns, learnPrompt, learnRows, MAX_NOTES, noteRows, scrollNotes, toNote } from '../hooks/lib/learn'
 
 const PLUGIN = 'extra-mods'
 const SURFACES = ['terminal', 'desktop'] as const
@@ -507,15 +507,38 @@ describe('learn notes', () => {
 
   test('the wheel walks back through older notes and returns to the newest', async () => {
     const notes = ['a', 'b', 'c'].map((id, at) => ({ id, title: id, text: id, kind: 'step' as const, at }))
-    expect(visibleNotes(notes, 0).map(n => n.id)).toEqual(['a', 'b', 'c'])
-    expect(visibleNotes(notes, 2).map(n => n.id)).toEqual(['a'])
-    expect(visibleNotes([], 0)).toEqual([])
+    expect(fitNotes(notes, 0, 20, 54).shown.map(n => n.id)).toEqual(['a', 'b', 'c'])
+    expect(fitNotes(notes, 2, 20, 54).shown.map(n => n.id)).toEqual(['a'])
     expect(scrollNotes(0, -1, 3)).toBe(1)
     expect(scrollNotes(2, -3, 3)).toBe(2)
     expect(scrollNotes(1, 1, 3)).toBe(0)
     expect(scrollNotes(0, 1, 3)).toBe(0)
     expect(scrollNotes(0, -1, 0)).toBe(0)
     expect(scrollNotes(1, 0, 3)).toBe(1)
+  })
+
+  test('a note takes its gap, its title and its wrapped text in rows', async () => {
+    const note = (title: string, text: string) => ({ id: 'n', title, text, kind: 'tech' as const, at: 0 })
+    expect(noteRows(note('Vite', 'A dev server.'), 54)).toBe(3)
+    expect(noteRows(note('Vite', 'x'.repeat(600)), 54)).toBe(1 + 1 + 12)
+    expect(noteRows(note('Vite', 'one\n\ntwo'), 54)).toBe(1 + 1 + 3)
+  })
+
+  test('the list draws the newest notes that fit, and shows the top of one too tall', async () => {
+    const notes = Array.from({ length: 30 }, (_, i) => ({ id: `n${i}`, title: 't', text: 'short', kind: 'step' as const, at: i }))
+    const fit = fitNotes(notes, 0, 10, 54)
+    expect(fit.shown.map(n => n.id)).toEqual(['n27', 'n28', 'n29'])
+    expect(fit.isTall).toBe(false)
+    expect(fitNotes(notes, 2, 10, 54).shown.map(n => n.id)).toEqual(['n25', 'n26', 'n27'])
+    const big = { id: 'big', title: 'Big', text: 'x'.repeat(600), kind: 'tech' as const, at: 99 }
+    expect(fitNotes([...notes, big], 0, 10, 54)).toEqual({ shown: [big], isTall: true })
+    expect(fitNotes([], 0, 10, 54)).toEqual({ shown: [], isTall: false })
+  })
+
+  test('the list gets the rows the rest of the page leaves it', async () => {
+    expect(learnRows(26, 2, false)).toBe(9)
+    expect(learnRows(26, 2, true)).toBe(8)
+    expect(learnRows(10, 2, false)).toBe(3)
   })
 
   test("the instruction for Claude speaks the panel's language and names the tool", async () => {
@@ -665,6 +688,27 @@ describe('learn tab', () => {
     await $.command.run({ command: 'tools', args: 'learn' } as never)
     expect(opened.at(-1)).toMatchObject({ id: 'claude-tools', focus: true })
     expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(2)
+  })
+
+  test('many notes keep the tabs and the switch whole; a note too tall shows its title', async ($, on) => {
+    engineKeeps(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...hint })
+    const menu = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...pane })
+    await corner.press({ key: 'tools-toggle' })
+    await menu.press({ key: 'tab-learn' })
+    await menu.press({ key: 'learn-on' })
+    for (let i = 0; i < 30; i++) await $.tool.call({ tool: LEARN_TOOL, title: `Note ${i}`, text: 'Short.' } as never)
+    // A 26-row pane leaves the list 9 rows: the three newest three-row notes.
+    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(3)
+    expect(await menu.find({ text: /Note 29/ })).toBeDefined()
+    expect(await menu.find({ text: /Note 26/ })).toBeUndefined()
+    for (const key of ['tabs', 'h-Learn mode', 'learn-onoff']) expect((await menu.find({ key }))?.props.flexShrink).toBe(0)
+    expect((await menu.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-end')
+
+    await $.tool.call({ tool: LEARN_TOOL, title: 'A long one', text: 'x'.repeat(600) } as never)
+    expect(await menu.findAll({ type: 'Markdown' })).toHaveLength(1)
+    expect(await menu.find({ text: /A long one/ })).toBeDefined()
+    expect((await menu.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-start')
   })
 
   test('a /clear empties the Learn tab and keeps learn mode', async ($, on) => {
