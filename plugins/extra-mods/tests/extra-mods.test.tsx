@@ -13,6 +13,7 @@ import {
   WT_SCHEME,
   type WtSettings,
 } from '../hooks/lib/palette'
+import { tabStripRows } from '../hooks/lib/layout'
 import { barCells, percentOf, stepLabel, visibleSteps } from '../hooks/lib/zen'
 import { backgroundPill, barFill, cacheState, CACHE_TTL_MS, colorFor, fmtDuration, fmtTokens } from '../hooks/lib/status'
 import {
@@ -651,6 +652,22 @@ describe('learn notes', () => {
     expect(learnRows(26, 2, false)).toBe(9)
     expect(learnRows(26, 2, true)).toBe(8)
     expect(learnRows(10, 2, false)).toBe(3)
+    // A taller tab strip, as the desktop's, leaves the list that much less.
+    expect(learnRows(26, 2, false, 4)).toBe(8)
+  })
+
+  test("the tab strip's rows: three on the terminal, the desktop's framed chips and their wrap", async () => {
+    const en = ['Zen', 'Theme', 'Mode', 'Status', 'Learn']
+    const pt = ['Zen', 'Tema', 'Modo', 'Status', 'Aprender']
+    expect(tabStripRows('terminal', pt, 'esc ✕', 20)).toBe(3)
+    // One row of chips (3) and the rule.
+    expect(tabStripRows('desktop', en, '✕', 54)).toBe(4)
+    expect(tabStripRows('desktop', pt, '✕', 54)).toBe(4)
+    // In Portuguese "esc ✕" no longer fits beside the chips: it drops to a row of its own.
+    expect(tabStripRows('desktop', en, 'esc ✕', 54)).toBe(4)
+    expect(tabStripRows('desktop', pt, 'esc ✕', 54)).toBe(5)
+    // Narrow, the chips themselves wrap.
+    expect(tabStripRows('desktop', en, '✕', 30)).toBe(3 + 3 + 1)
   })
 
   test("the instruction for Claude speaks the panel's language and names the tool", async () => {
@@ -794,7 +811,8 @@ describe('learn tab', () => {
   test('one explain call posts several notes, each why on its own line', async ($, on) => {
     engineKeeps(on)
     const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...wideHint })
-    const menus = await mountMenus($)
+    // A 40-row pane, so both notes fit on the desktop too.
+    const menus = await mountMenus($, 40)
     const [menu] = menus
     await corner.press({ key: 'tools-toggle' })
     await menu.press({ key: 'tab-learn' })
@@ -926,6 +944,19 @@ describe('learn tab', () => {
       expect(await m.find({ text: /A long one/ })).toBeDefined()
       expect((await m.find({ key: 'learn-list' }))?.props.justifyContent).toBe('flex-start')
     }
+  })
+
+  test("the desktop's taller tab strip leaves the list fewer rows than the terminal's", async ($, on) => {
+    engineKeeps(on)
+    const corner = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', ...hint })
+    // 29 rows: the terminal's list gets 12 (three four-row cards), the desktop's 11 (two).
+    const [terminal, desktop] = await mountMenus($, 29)
+    await corner.press({ key: 'tools-toggle' })
+    await terminal.press({ key: 'tab-learn' })
+    await terminal.press({ key: 'learn-on' })
+    for (let i = 0; i < 5; i++) await $.tool.call({ tool: LEARN_TOOL, title: `Note ${i}`, text: 'Short.' } as never)
+    expect(await terminal.findAll({ type: 'Markdown' })).toHaveLength(3)
+    expect(await desktop.findAll({ type: 'Markdown' })).toHaveLength(2)
   })
 
   test('a /clear empties the Learn tab and keeps learn mode', async ($, on) => {

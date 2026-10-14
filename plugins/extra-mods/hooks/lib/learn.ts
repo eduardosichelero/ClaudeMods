@@ -187,11 +187,12 @@ export const askLine = (ask: LearnAsk, width: number) => {
 const shownRows = (shown: readonly LearnNote[], width: number) =>
   shown.reduce((n, note, i) => n + noteRows(note, width) + (askHeading(shown, i) === null ? 0 : 1), 0)
 
-// The rows the Learn page leaves its list: the body less the tab strip (3),
-// the heading (2), the framed switch (3), the note under it, the "newer" line
-// while there is one, the language footer (6) and one spare row.
-export const learnRows = (bodyRows: number, noteLines: number, hasNewer: boolean) =>
-  Math.max(3, bodyRows - (3 + 2 + 3 + noteLines + (hasNewer ? 1 : 0) + 6 + 1))
+// The rows the Learn page leaves its list: the body less the tab strip
+// (`tabRows`: 3 on the terminal), the heading (2), the framed switch (3), the
+// note under it, the "newer" line while there is one, the language footer (6)
+// and one spare row.
+export const learnRows = (bodyRows: number, noteLines: number, hasNewer: boolean, tabRows = 3) =>
+  Math.max(3, bodyRows - (tabRows + 2 + 3 + noteLines + (hasNewer ? 1 : 0) + 6 + 1))
 
 // The notes the list draws, oldest first: with `scroll` of the newest hidden
 // below, the newest that fit in `rows` with their requests' headings. `isTall` when even the newest shown

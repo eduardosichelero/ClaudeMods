@@ -4,6 +4,7 @@ import type { EngineInterface, PaneOpenArgs, Register, RenderChildren, RenderInp
 import type { Effort, Lang, LearnAsk, LearnNote, Panel, RateLimit, StatusSnapshot, ThemeEntry, ZenColors, ZenStep, ZenTask, ZenTheme } from '../types'
 import { EFFORT_HEAT, EFFORTS, type Mode, MODELS, MODES, modeLabel, modelFamily } from './lib/modes'
 import { isLang, LANGS, modeName, phrase, type Phrase } from './lib/i18n'
+import { tabStripRows } from './lib/layout'
 import {
   backgroundPill,
   BAR_WIDTH,
@@ -765,10 +766,15 @@ async function toggleMenu($: EngineInterface, panel: Panel = 'zen') {
 
 // The theme list scrolls on its own, inside a pane exactly the body's height,
 // so the tabs above it and the language row under it stay where they are.
-// Rows the themes page takes besides the list: the tab strip (3), the kept
-// theme, the search, the actions, a status line while there is one, the
+// Rows the themes page takes besides the list: the tab strip (`tabRows`), the
+// kept theme, the search, the actions, a status line while there is one, the
 // language footer (6, its chips framed), and one spare in case a row wraps.
-const listRows = (bodyRows: number, hasStatus: boolean) => Math.max(3, bodyRows - (3 + 3 + (hasStatus ? 1 : 0) + 6 + 1))
+const listRows = (bodyRows: number, hasStatus: boolean, tabRows = paneTabRows) =>
+  Math.max(3, bodyRows - (tabRows + 3 + (hasStatus ? 1 : 0) + 6 + 1))
+
+// The rows the pane's tab strip took when last drawn: 3 on the terminal, more
+// on the desktop, whose tabs are framed chips that can wrap.
+let paneTabRows = 3
 
 async function foundThemes($: EngineInterface) {
   const query = (await read($, themeQuery)).trim().toLowerCase()
@@ -847,6 +853,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
   // its own text and native buttons in its own theme, dark on a light one.
   const background = e.surface === 'terminal' ? ((await read($, paneBg)) ?? PANE_BACKGROUND) : undefined
   const columns = e.props.bodyColumns ?? PANE_SIZE.columns
+  const tabRows = tabStripRows(
+    e.surface,
+    TABS.map(({ name }) => t(name)),
+    t(tab === 'learn' ? 'closeLearn' : 'close'),
+    Math.max(10, columns - 2),
+  )
+  paneTabRows = tabRows
   const rule = (
     <Text dimColor wrap="truncate">
       {'─'.repeat(Math.max(10, columns - 2))}
@@ -952,7 +965,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
       if (!busy) rows.push(<Button key="themes-download" plain label={t('themesRetry')} onPress={() => ensureThemes($)} />)
     } else {
       const top = await read($, themeScroll)
-      const shown = listRows(e.props.scroll.bodyRows, status !== '')
+      const shown = listRows(e.props.scroll.bodyRows, status !== '', tabRows)
       const below = Math.max(0, found.length - top - shown)
       rows.push(
         <Box key="themes-current" justifyContent="space-between" gap={1} flexShrink={0}>
@@ -1127,7 +1140,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>, panel: Panel
     const list = await read($, notes)
     const scroll = await read($, notesScroll)
     const width = Math.max(10, columns - 2)
-    const room = learnRows(e.props.scroll.bodyRows, Math.ceil(t('learnNote').length / width), scroll > 0)
+    const room = learnRows(e.props.scroll.bodyRows, Math.ceil(t('learnNote').length / width), scroll > 0, tabRows)
     const { shown, isTall } = fitNotes(list, scroll, room, width)
     rows.push(
       heading(t('learnMode')),
