@@ -4,6 +4,8 @@
 
 A sidebar for [Claude Code](https://claude.com/claude-code): Zen mode, themes, model and effort, and a status line.
 
+A fork of [Jhonatan de Souza's ClaudeMods](https://github.com/Jhonatan-de-Souza/ClaudeMods) that adds the Learn tab and draws the sidebar in the desktop app's own colors.
+
 ### Zen
 
 Hides all tool calls and giant code blocks and shows just a progress bar and small progress reports.
@@ -45,9 +47,11 @@ The sidebar speaks English and Português. Keys: **Tab** moves, **Enter** select
 Needs Claude Code 2.1.292 or newer.
 
 ```
-claude plugin marketplace add Jhonatan-de-Souza/ClaudeMods
+claude plugin marketplace add eduardosichelero/ClaudeMods
 claude plugin install extra-mods@jdsjh-mods --scope user
 ```
+
+In the Claude desktop app: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `eduardosichelero/ClaudeMods`, then **Add plugin**.
 
 Run `/reload-plugins` (or start a new session), then click **◆ extra-mods ▲** at the bottom right, or type `/tools`.
 
@@ -71,7 +75,7 @@ To update: `claude plugin marketplace update jdsjh-mods && claude plugin update 
 Point your coding agent at this repository and ask it to install the mod. Steps for the agent (ask the user before step 4):
 
 1. Run `claude --version`; it must be 2.1.292 or higher.
-2. Run `claude plugin marketplace add Jhonatan-de-Souza/ClaudeMods`.
+2. Run `claude plugin marketplace add eduardosichelero/ClaudeMods`.
 3. Run `claude plugin install extra-mods@jdsjh-mods --scope user`.
 4. *Optional, only if the user doesn't want the mod's status line:* copy `statusline/statusline.py` to `~/.claude/statusline.py` and set `"statusLine": { "type": "command", "command": "python ~/.claude/statusline.py", "refreshInterval": 2 }` in `~/.claude/settings.json` (`python3` on macOS and Linux).
 5. Check `claude plugin list` shows `extra-mods` enabled, then tell the user to run `/reload-plugins`.

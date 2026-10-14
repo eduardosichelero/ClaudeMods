@@ -4,6 +4,8 @@
 
 Uma barra lateral para o [Claude Code](https://claude.com/claude-code): modo Zen, temas, modelo e esforço, e uma linha de status.
 
+Um fork do [ClaudeMods do Jhonatan de Souza](https://github.com/Jhonatan-de-Souza/ClaudeMods) que adiciona a aba Aprender e desenha a barra lateral nas cores do próprio app desktop.
+
 ### Zen
 
 Esconde todas as chamadas de ferramentas e os blocos gigantes de código, e mostra só uma barra de progresso e pequenos relatos do andamento.
@@ -45,9 +47,11 @@ A barra lateral fala English e Português. Teclas: **Tab** move, **Enter** escol
 Precisa do Claude Code 2.1.292 ou mais novo.
 
 ```
-claude plugin marketplace add Jhonatan-de-Souza/ClaudeMods
+claude plugin marketplace add eduardosichelero/ClaudeMods
 claude plugin install extra-mods@jdsjh-mods --scope user
 ```
+
+No app desktop do Claude: clique em **+** ao lado da caixa do prompt e depois em **Plugins**, adicione o marketplace `eduardosichelero/ClaudeMods` e, por fim, o plugin `extra-mods`.
 
 Rode `/reload-plugins` (ou abra uma nova sessão) e clique em **◆ extra-mods ▲** no canto inferior direito, ou digite `/tools`.
 
@@ -71,7 +75,7 @@ Para atualizar: `claude plugin marketplace update jdsjh-mods && claude plugin up
 Aponte seu agente para este repositório e peça para instalar o mod. Passos para o agente (pergunte ao usuário antes do passo 4):
 
 1. Rode `claude --version`; precisa ser 2.1.292 ou maior.
-2. Rode `claude plugin marketplace add Jhonatan-de-Souza/ClaudeMods`.
+2. Rode `claude plugin marketplace add eduardosichelero/ClaudeMods`.
 3. Rode `claude plugin install extra-mods@jdsjh-mods --scope user`.
 4. *Opcional, só se o usuário não quiser a linha de status do mod:* copie `statusline/statusline.py` para `~/.claude/statusline.py` e defina `"statusLine": { "type": "command", "command": "python ~/.claude/statusline.py", "refreshInterval": 2 }` no `~/.claude/settings.json` (`python3` no macOS e Linux).
 5. Confira se `claude plugin list` mostra o `extra-mods` ativado e peça ao usuário para rodar `/reload-plugins`.
